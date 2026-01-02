@@ -5,6 +5,12 @@
 local Constants = require("constants")
 local Palette = require("palette")
 
+-- Localize math functions
+local floor = math.floor
+local sqrt = math.sqrt
+local min = math.min
+local max = math.max
+
 local Heightmap = {}
 
 -- Configuration (matching Picotron exactly)
@@ -44,14 +50,14 @@ local function get_pixel_height_index(px, pz)
     end
 
     -- Clamp to valid range
-    px = math.max(0, math.min(Heightmap.MAP_SIZE - 1, math.floor(px)))
-    pz = math.max(0, math.min(Heightmap.MAP_SIZE - 1, math.floor(pz)))
+    px = max(0, min(Heightmap.MAP_SIZE - 1, floor(px)))
+    pz = max(0, min(Heightmap.MAP_SIZE - 1, floor(pz)))
 
     -- Get pixel color (Love2D returns 0.0-1.0, convert to 0-255)
     local r, g, b, a = heightmap_image_data:getPixel(px, pz)
-    local r8 = math.floor(r * 255 + 0.5)
-    local g8 = math.floor(g * 255 + 0.5)
-    local b8 = math.floor(b * 255 + 0.5)
+    local r8 = floor(r * 255 + 0.5)
+    local g8 = floor(g * 255 + 0.5)
+    local b8 = floor(b * 255 + 0.5)
 
     -- Use Palette module for reverse lookup
     return Palette.getIndex(r8, g8, b8)
@@ -79,8 +85,8 @@ function Heightmap.get_height(world_x, world_z)
     local map_z_f = (world_z + half_world) / Heightmap.TILE_SIZE
 
     -- Get the four surrounding heightmap pixels
-    local x0 = math.floor(map_x_f)
-    local z0 = math.floor(map_z_f)
+    local x0 = floor(map_x_f)
+    local z0 = floor(map_z_f)
     local x1 = x0 + 1
     local z1 = z0 + 1
 
@@ -111,8 +117,8 @@ end
 function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
     render_distance = render_distance or 20
     if not grid_count then
-        grid_count = math.floor(render_distance / Heightmap.TILE_SIZE) * 2
-        grid_count = math.min(grid_count, 32)
+        grid_count = floor(render_distance / Heightmap.TILE_SIZE) * 2
+        grid_count = min(grid_count, 32)
     end
 
     local verts = {}
@@ -121,8 +127,8 @@ function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
     local half_size = grid_count * Heightmap.TILE_SIZE / 2
 
     -- Snap camera position to grid
-    local center_x = math.floor(cam_x / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
-    local center_z = math.floor(cam_z / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
+    local center_x = floor(cam_x / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
+    local center_z = floor(cam_z / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
 
     -- Create vertices for a (grid_count+1) x (grid_count+1) grid
     for gz = 0, grid_count do
@@ -252,16 +258,16 @@ local batch_ground = {}
 function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam_yaw)
     render_distance = render_distance or 20
     if not grid_count then
-        grid_count = math.floor(render_distance / Heightmap.TILE_SIZE) * 2
-        grid_count = math.min(grid_count, 32)  -- Cap at 32x32 grid for performance
+        grid_count = floor(render_distance / Heightmap.TILE_SIZE) * 2
+        grid_count = min(grid_count, 32)  -- Cap at 32x32 grid for performance
     end
 
     -- Initialize texture cache once
     init_texture_cache()
 
     -- Snap camera to grid for cache key
-    local center_x = math.floor(cam_x / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
-    local center_z = math.floor(cam_z / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
+    local center_x = floor(cam_x / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
+    local center_z = floor(cam_z / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
 
     -- Regenerate terrain only if camera moved to a new tile
     if not cached_terrain or cached_center_x ~= center_x or cached_center_z ~= center_z or cached_grid_count ~= grid_count then
@@ -276,7 +282,7 @@ function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam
     local faces = cached_terrain.faces
 
     -- Animate water: swap between water1 and water2 every 0.5 seconds
-    local water_frame = math.floor(love.timer.getTime() * 2) % 2
+    local water_frame = floor(love.timer.getTime() * 2) % 2
     local tex_water = water_frame == 0 and cached_textures.water1 or cached_textures.water2
 
     -- Use cached textures
@@ -304,7 +310,7 @@ function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam
         local dx = center_fx - cam_x
         local dz = center_fz - cam_z
         local dist_sq = dx * dx + dz * dz
-        local distance = math.sqrt(dist_sq)
+        local distance = sqrt(dist_sq)
         local fogFactor = renderer.calcFogFactor(distance)
 
         -- Build triangle data
@@ -356,8 +362,8 @@ end
 -- Convert world coordinates to tile coordinates
 function Heightmap.world_to_tile(world_x, world_z)
     local half_world = (Heightmap.MAP_SIZE * Heightmap.TILE_SIZE) / 2
-    local tile_x = math.floor((world_x + half_world) / Heightmap.TILE_SIZE)
-    local tile_z = math.floor((world_z + half_world) / Heightmap.TILE_SIZE)
+    local tile_x = floor((world_x + half_world) / Heightmap.TILE_SIZE)
+    local tile_z = floor((world_z + half_world) / Heightmap.TILE_SIZE)
     return tile_x, tile_z
 end
 
