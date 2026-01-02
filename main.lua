@@ -2,11 +2,12 @@
 local scene_manager = require("scene_manager")
 local config = require("config")
 local renderer = require("renderer_dda")
+local profile = require("profiler")
 
 -- Frame rate tracking
 local frameCount = 0
 local frameTimeAccum = 0
-local logInterval = 5  -- Log every 1 second
+local logInterval = 5  -- Log every 5 seconds
 
 -- Register all scenes
 scene_manager.register("menu", require("menu"))
@@ -40,8 +41,18 @@ end
 
 function love.draw()
     scene_manager.draw()
+
+    -- Draw profiler overlay (on top of everything)
+    profile.draw()
 end
 
 function love.keypressed(key)
+    -- F3 toggles profiler
+    if key == "f3" then
+        local enabled = profile.toggle()
+        print("Profiler: " .. (enabled and "ON" or "OFF"))
+        return
+    end
+
     scene_manager.keypressed(key)
 end

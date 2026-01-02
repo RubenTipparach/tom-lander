@@ -223,45 +223,133 @@ function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
     return verts, faces
 end
 
--- Draw terrain using the renderer
-function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance)
-    local verts, faces = Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
+-- Cached terrain data (geometry + textures)
+local cached_terrain = nil
+local cached_center_x = nil
+local cached_center_z = nil
+local cached_grid_count = nil
+local cached_textures = nil  -- Cached texture data
 
-    -- Animate water: swap between SPRITE_WATER and SPRITE_WATER2 every 0.5 seconds
+-- Initialize texture cache
+local function init_texture_cache()
+    if cached_textures then return end
+    cached_textures = {
+        water1 = Constants.getTextureData(Constants.SPRITE_WATER),
+        water2 = Constants.getTextureData(Constants.SPRITE_WATER2),
+        grass = Constants.getTextureData(Constants.SPRITE_GRASS),
+        rocks = Constants.getTextureData(Constants.SPRITE_ROCKS),
+        ground = Constants.getTextureData(Constants.SPRITE_GROUND),
+    }
+end
+
+-- Pre-allocated batch arrays (reused each frame to avoid GC)
+local batch_water = {}
+local batch_grass = {}
+local batch_rocks = {}
+local batch_ground = {}
+
+-- Draw terrain using the renderer (batched by texture type)
+function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam_yaw)
+    render_distance = render_distance or 20
+    if not grid_count then
+        grid_count = math.floor(render_distance / Heightmap.TILE_SIZE) * 2
+        grid_count = math.min(grid_count, 32)  -- Cap at 32x32 grid for performance
+    end
+
+    -- Initialize texture cache once
+    init_texture_cache()
+
+    -- Snap camera to grid for cache key
+    local center_x = math.floor(cam_x / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
+    local center_z = math.floor(cam_z / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
+
+    -- Regenerate terrain only if camera moved to a new tile
+    if not cached_terrain or cached_center_x ~= center_x or cached_center_z ~= center_z or cached_grid_count ~= grid_count then
+        local verts, faces = Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
+        cached_terrain = {verts = verts, faces = faces}
+        cached_center_x = center_x
+        cached_center_z = center_z
+        cached_grid_count = grid_count
+    end
+
+    local verts = cached_terrain.verts
+    local faces = cached_terrain.faces
+
+    -- Animate water: swap between water1 and water2 every 0.5 seconds
     local water_frame = math.floor(love.timer.getTime() * 2) % 2
-    local water_sprite = water_frame == 0 and Constants.SPRITE_WATER or Constants.SPRITE_WATER2
+    local tex_water = water_frame == 0 and cached_textures.water1 or cached_textures.water2
 
+    -- Use cached textures
+    local tex_grass = cached_textures.grass
+    local tex_rocks = cached_textures.rocks
+    local tex_ground = cached_textures.ground
+
+    -- Clear batch arrays (reuse tables, just reset count)
+    local water_count = 0
+    local grass_count = 0
+    local rocks_count = 0
+    local ground_count = 0
+
+    -- Sort faces into batches by texture type
     for _, face in ipairs(faces) do
-        -- Use animated water sprite for water faces
+        local v1 = verts[face.indices[1]]
+        local v2 = verts[face.indices[2]]
+        local v3 = verts[face.indices[3]]
+
+        -- Calculate tile center for fog
+        local center_fx = (v1.pos[1] + v2.pos[1] + v3.pos[1]) * 0.333333
+        local center_fz = (v1.pos[3] + v2.pos[3] + v3.pos[3]) * 0.333333
+
+        -- Vector from camera to tile center
+        local dx = center_fx - cam_x
+        local dz = center_fz - cam_z
+        local dist_sq = dx * dx + dz * dz
+        local distance = math.sqrt(dist_sq)
+        local fogFactor = renderer.calcFogFactor(distance)
+
+        -- Build triangle data
+        local tri = {
+            {pos = v1.pos, uv = face.uvs[1]},
+            {pos = v2.pos, uv = face.uvs[2]},
+            {pos = v3.pos, uv = face.uvs[3]},
+            fogFactor
+        }
+
+        -- Sort into appropriate batch
         local sprite_id = face.sprite
         if sprite_id == Constants.SPRITE_WATER or sprite_id == Constants.SPRITE_WATER2 then
-            sprite_id = water_sprite
+            water_count = water_count + 1
+            batch_water[water_count] = tri
+        elseif sprite_id == Constants.SPRITE_GRASS then
+            grass_count = grass_count + 1
+            batch_grass[grass_count] = tri
+        elseif sprite_id == Constants.SPRITE_ROCKS then
+            rocks_count = rocks_count + 1
+            batch_rocks[rocks_count] = tri
+        else
+            ground_count = ground_count + 1
+            batch_ground[ground_count] = tri
         end
+    end
 
-        local texData = Constants.getTextureData(sprite_id)
-        if texData then
-            local v1 = verts[face.indices[1]]
-            local v2 = verts[face.indices[2]]
-            local v3 = verts[face.indices[3]]
+    -- Trim batch arrays to actual size (for iteration)
+    for i = water_count + 1, #batch_water do batch_water[i] = nil end
+    for i = grass_count + 1, #batch_grass do batch_grass[i] = nil end
+    for i = rocks_count + 1, #batch_rocks do batch_rocks[i] = nil end
+    for i = ground_count + 1, #batch_ground do batch_ground[i] = nil end
 
-            -- Calculate fog factor based on tile center distance from camera
-            local center_x = (v1.pos[1] + v2.pos[1] + v3.pos[1]) / 3
-            local center_z = (v1.pos[3] + v2.pos[3] + v3.pos[3]) / 3
-            local dx = center_x - cam_x
-            local dz = center_z - cam_z
-            local distance = math.sqrt(dx * dx + dz * dz)
-            local fogFactor = renderer.calcFogFactor(distance)
-
-            renderer.drawTriangle3D(
-                {pos = v1.pos, uv = face.uvs[1]},
-                {pos = v2.pos, uv = face.uvs[2]},
-                {pos = v3.pos, uv = face.uvs[3]},
-                nil,
-                texData,
-                nil,  -- brightness
-                fogFactor
-            )
-        end
+    -- Draw each batch
+    if ground_count > 0 then
+        renderer.drawTriangleBatch(batch_ground, tex_ground, nil)
+    end
+    if grass_count > 0 then
+        renderer.drawTriangleBatch(batch_grass, tex_grass, nil)
+    end
+    if rocks_count > 0 then
+        renderer.drawTriangleBatch(batch_rocks, tex_rocks, nil)
+    end
+    if water_count > 0 then
+        renderer.drawTriangleBatch(batch_water, tex_water, nil)
     end
 end
 

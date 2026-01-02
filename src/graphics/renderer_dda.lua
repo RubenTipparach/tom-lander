@@ -3,15 +3,28 @@
 
 local config = require("config")
 local ffi = require("ffi")
+local bit = require("bit")
+local mat4 = require("mat4")
 local renderer_dda = {}
+
+-- Localize frequently used functions for LuaJIT optimization
+local band = bit.band
+local bor = bit.bor
+local floor = math.floor
 
 -- Performance counters
 local stats = {
     trianglesDrawn = 0,
     pixelsDrawn = 0,
     trianglesCulled = 0,
-    trianglesClipped = 0
+    trianglesClipped = 0,
+    -- Timing breakdown (in ms, accumulated per frame)
+    timeTransform = 0,
+    timeRasterize = 0
 }
+
+-- High-resolution timer
+local getTime = love.timer.getTime
 
 local RENDER_WIDTH = config.RENDER_WIDTH
 local RENDER_HEIGHT = config.RENDER_HEIGHT
@@ -43,6 +56,9 @@ local fogColor = {0, 0, 0}  -- RGB 0-255 (unused, kept for compatibility)
 
 -- Clear/background color - fog dithers to this color
 local clearColor = {162, 136, 121}  -- #a28879 - matches framebuffer clear
+
+-- Dithering toggle (for testing performance impact)
+local ditherEnabled = true
 
 -- Bayer 4x4 dithering matrix for fog transitions
 local bayerMatrix = {
@@ -92,6 +108,8 @@ function renderer_dda.clearBuffers()
     stats.pixelsDrawn = 0
     stats.trianglesCulled = 0
     stats.trianglesClipped = 0
+    stats.timeTransform = 0
+    stats.timeRasterize = 0
 
     -- Clear z-buffer using FFI (optimized with ffi.fill)
     ffi.fill(zbufferPtr, RENDER_WIDTH * RENDER_HEIGHT * ffi.sizeof("float"), 0x7F)  -- Max float pattern
@@ -144,6 +162,17 @@ end
 -- Get fog settings for external distance calculations
 function renderer_dda.getFogSettings()
     return fogNear, fogFar
+end
+
+-- Toggle dithering on/off (for testing performance impact)
+function renderer_dda.toggleDither()
+    ditherEnabled = not ditherEnabled
+    return ditherEnabled
+end
+
+-- Check if dithering is enabled
+function renderer_dda.isDitherEnabled()
+    return ditherEnabled
 end
 
 -- Set pixel with Z-buffer test (FFI optimized)
@@ -392,21 +421,24 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
             -- Pre-calculate constant values outside loop
             local texWidthMask = texWidth - 1
             local texHeightMask = texHeight - 1
-            local texWidthFloat = texWidth
-            local texHeightFloat = texHeight
-            local isPowerOf2Width = bit.band(texWidth, texWidthMask) == 0
-            local isPowerOf2Height = bit.band(texHeight, texHeightMask) == 0
 
-            -- Perspective-correct every 8 pixels optimization
+            -- Perspective-correct every 8 pixels (balance of quality vs speed)
             local PERSP_STEP = 8
             local pixel_count = 0
             local u_linear, v_linear
             local u_linear_step, v_linear_step
             local next_persp_col = col
 
+            -- Cache fog state for this scanline (avoid per-pixel checks)
+            local applyFog = fogEnabled and fogFactor and fogFactor > 0
+            local fogR, fogG, fogB = clearColor[1], clearColor[2], clearColor[3]
+
+            -- Pre-calculate row offset for index calculation
+            local rowOffset = row * RENDER_WIDTH
+
             while col < draw_max_x do
                 -- Index calculation (bounds already guaranteed by clipping)
-                local index = row * RENDER_WIDTH + col
+                local index = rowOffset + col
 
                 -- Early-Z rejection: test depth before expensive perspective divide
                 if tex_z < zbufferPtr[index] then
@@ -453,25 +485,10 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
                     v = v_linear + v_linear_step * pixel_count
                     pixel_count = pixel_count + 1
 
-                    -- Optimized texture sampling with bitwise AND for power-of-2, modulo otherwise
-                    local texX, texY
-
-                    -- Use bitwise AND if power of 2 (much faster than modulo)
-                    if isPowerOf2Width then
-                        texX = bit.band(math.floor(u), texWidthMask)
-                    else
-                        texX = math.floor(u % texWidthFloat)
-                        if texX < 0 then texX = texX + texWidth end
-                        if texX >= texWidth then texX = texWidthMask end
-                    end
-
-                    if isPowerOf2Height then
-                        texY = bit.band(math.floor(v), texHeightMask)
-                    else
-                        texY = math.floor(v % texHeightFloat)
-                        if texY < 0 then texY = texY + texHeight end
-                        if texY >= texHeight then texY = texHeightMask end
-                    end
+                    -- Texture sampling with proper wrapping
+                    -- Note: must use floor() not bor() since UV can be negative
+                    local texX = band(floor(u), texWidthMask)
+                    local texY = band(floor(v), texHeightMask)
 
                     -- Sample texture using FFI (RGBA format)
                     local texIndex = (texY * texWidth + texX) * 4
@@ -486,49 +503,19 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
 
                     -- Apply brightness modulation with dithering if provided
                     if brightness then
-                        -- Bayer dithering for transparency
-                        local bayerX = (col % 4) + 1
-                        local bayerY = (row % 4) + 1
-                        local threshold = bayerMatrix[bayerY][bayerX] / 16.0
+                        local bayerIdx = band(row, 3) * 4 + band(col, 3) + 1
+                        local threshold = bayerMatrix[band(row, 3) + 1][band(col, 3) + 1] * 0.0625
 
-                        -- If brightness is below threshold, skip pixel entirely for transparency
                         if brightness < threshold then
                             goto continue_pixel
                         end
-                        -- Otherwise draw at full brightness (texture color as-is)
                     end
 
-                    -- Apply fog with dithering if enabled
-                    -- Only apply fog to pixels that aren't already black from lighting
-                    if fogEnabled and not (r == 0 and g == 0 and b == 0) then
-                        local actualFogFactor
-
-                        if fogFactor then
-                            -- Use pre-calculated per-triangle fog factor
-                            actualFogFactor = fogFactor
-                        else
-                            -- Fall back to per-pixel depth fog calculation
-                            local depth = 1 / tex_w  -- Recover actual depth
-                            if depth > fogNear then
-                                actualFogFactor = (depth - fogNear) / (fogFar - fogNear)
-                                actualFogFactor = math.max(0, math.min(1, actualFogFactor))
-                            else
-                                actualFogFactor = 0
-                            end
-                        end
-
-                        if actualFogFactor > 0 then
-                            -- Dithered fog using Bayer matrix
-                            local bayerX = (col % 4) + 1
-                            local bayerY = (row % 4) + 1
-                            local threshold = bayerMatrix[bayerY][bayerX] / 16.0
-
-                            -- Apply dithering: if fog factor > threshold, use clear/background color
-                            if actualFogFactor > threshold then
-                                r = clearColor[1]
-                                g = clearColor[2]
-                                b = clearColor[3]
-                            end
+                    -- Apply fog with dithering (pre-checked at scanline level)
+                    if applyFog then
+                        local threshold = bayerMatrix[band(row, 3) + 1][band(col, 3) + 1] * 0.0625
+                        if fogFactor > threshold then
+                            r, g, b = fogR, fogG, fogB
                         end
                     end
 
@@ -538,8 +525,6 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
                     framebufferPtr[pixelIndex + 1] = g
                     framebufferPtr[pixelIndex + 2] = b
                     framebufferPtr[pixelIndex + 3] = 255
-
-                    stats.pixelsDrawn = stats.pixelsDrawn + 1
                 end
 
                 ::continue_pixel::
@@ -713,11 +698,11 @@ end
 -- brightness is optional per-vertex lighting multiplier
 -- fogFactor: optional 0-1 value for per-triangle fog (nil = use per-pixel depth fog)
 function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData, brightness, fogFactor)
+    local t0 = getTime()
+
     if not currentMVP then
         error("Must call renderer_dda.setMatrices() before drawTriangle3D()")
     end
-
-    local mat4 = require("mat4")
 
     -- Early backface culling in world space (DISABLED - causes issues)
     -- TODO: Fix world-space backface culling math
@@ -817,7 +802,121 @@ function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData, brightness, f
         p3[3] / p3[4]
     }
 
+    local t1 = getTime()
+    stats.timeTransform = stats.timeTransform + (t1 - t0)
+
     renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fogFactor)
+
+    stats.timeRasterize = stats.timeRasterize + (getTime() - t1)
+end
+
+-- Pre-allocated buffers for batch drawing (avoid per-triangle allocations)
+local batchP1 = {0, 0, 0, 0}
+local batchP2 = {0, 0, 0, 0}
+local batchP3 = {0, 0, 0, 0}
+local batchVA = {0, 0, 0, 0, 0, 0}
+local batchVB = {0, 0, 0, 0, 0, 0}
+local batchVC = {0, 0, 0, 0, 0, 0}
+
+-- Inline MVP transform (avoids function call and table creation)
+local function transformVertex(mvp, x, y, z, out)
+    out[1] = mvp[1] * x + mvp[2] * y + mvp[3] * z + mvp[4]
+    out[2] = mvp[5] * x + mvp[6] * y + mvp[7] * z + mvp[8]
+    out[3] = mvp[9] * x + mvp[10] * y + mvp[11] * z + mvp[12]
+    out[4] = mvp[13] * x + mvp[14] * y + mvp[15] * z + mvp[16]
+end
+
+-- Draw multiple triangles with the same texture (optimized for terrain/batches)
+-- triangles: array of {v1, v2, v3, fogFactor} where v1/v2/v3 are {pos={x,y,z}, uv={u,v}}
+-- This avoids per-triangle table allocations and function call overhead
+function renderer_dda.drawTriangleBatch(triangles, texData, brightness)
+    if not currentMVP then
+        error("Must call renderer_dda.setMatrices() before drawTriangleBatch()")
+    end
+
+    local t0 = getTime()
+    local mvp = currentMVP
+    local nearPlane = 0.01
+    local halfW = RENDER_WIDTH * 0.5
+    local halfH = RENDER_HEIGHT * 0.5
+
+    -- Cache texture dimensions once for entire batch
+    local texW = texData:getWidth()
+    local texH = texData:getHeight()
+
+    for i = 1, #triangles do
+        local tri = triangles[i]
+        local v1, v2, v3, fogFactor = tri[1], tri[2], tri[3], tri[4]
+
+        -- Inline transform to clip space (reuse pre-allocated tables)
+        local p1x, p1y, p1z = v1.pos[1], v1.pos[2], v1.pos[3]
+        local p2x, p2y, p2z = v2.pos[1], v2.pos[2], v2.pos[3]
+        local p3x, p3y, p3z = v3.pos[1], v3.pos[2], v3.pos[3]
+
+        transformVertex(mvp, p1x, p1y, p1z, batchP1)
+        transformVertex(mvp, p2x, p2y, p2z, batchP2)
+        transformVertex(mvp, p3x, p3y, p3z, batchP3)
+
+        -- Near plane culling
+        local w1, w2, w3 = batchP1[4], batchP2[4], batchP3[4]
+        local n1 = w1 <= nearPlane
+        local n2 = w2 <= nearPlane
+        local n3 = w3 <= nearPlane
+
+        -- All behind - skip
+        if n1 and n2 and n3 then
+            goto continue_batch
+        end
+
+        -- Partial clipping - fall back to regular path (rare for terrain)
+        if n1 or n2 or n3 then
+            -- Use regular drawTriangle3D for clipped triangles
+            renderer_dda.drawTriangle3D(v1, v2, v3, nil, texData, brightness, fogFactor)
+            goto continue_batch
+        end
+
+        -- Project to screen space (inline)
+        local invW1 = 1 / w1
+        local invW2 = 1 / w2
+        local invW3 = 1 / w3
+
+        local s1x = (batchP1[1] * invW1 + 1) * halfW
+        local s1y = (1 - batchP1[2] * invW1) * halfH
+        local s2x = (batchP2[1] * invW2 + 1) * halfW
+        local s2y = (1 - batchP2[2] * invW2) * halfH
+        local s3x = (batchP3[1] * invW3 + 1) * halfW
+        local s3y = (1 - batchP3[2] * invW3) * halfH
+
+        -- Build screen-space vertices (reuse pre-allocated tables)
+        batchVA[1] = s1x
+        batchVA[2] = s1y
+        batchVA[3] = invW1
+        batchVA[4] = v1.uv[1] * texW * invW1
+        batchVA[5] = v1.uv[2] * texH * invW1
+        batchVA[6] = batchP1[3] * invW1
+
+        batchVB[1] = s2x
+        batchVB[2] = s2y
+        batchVB[3] = invW2
+        batchVB[4] = v2.uv[1] * texW * invW2
+        batchVB[5] = v2.uv[2] * texH * invW2
+        batchVB[6] = batchP2[3] * invW2
+
+        batchVC[1] = s3x
+        batchVC[2] = s3y
+        batchVC[3] = invW3
+        batchVC[4] = v3.uv[1] * texW * invW3
+        batchVC[5] = v3.uv[2] * texH * invW3
+        batchVC[6] = batchP3[3] * invW3
+
+        -- Rasterize
+        renderer_dda.drawTriangle(batchVA, batchVB, batchVC, nil, texData, brightness, fogFactor)
+
+        ::continue_batch::
+    end
+
+    local t1 = getTime()
+    stats.timeTransform = stats.timeTransform + (t1 - t0)
 end
 
 -- Draw a 3D line in world space with depth testing
@@ -829,8 +928,6 @@ function renderer_dda.drawLine3D(p0, p1, r, g, b, skipZBuffer)
     if not currentMVP then
         error("Must call renderer_dda.setMatrices() before drawLine3D()")
     end
-
-    local mat4 = require("mat4")
 
     -- Transform to clip space
     local c0 = mat4.multiplyVec4(currentMVP, {p0[1], p0[2], p0[3], 1})

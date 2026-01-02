@@ -1,150 +1,204 @@
--- Simple profiler for performance analysis
+-- Profiler module (ported from Picotron's abledbody profiler v1.1)
+-- Shows CPU % of 60fps frame budget, averaged over multiple frames
 
-local profiler = {}
+local function do_nothing() end
 
--- Storage for timing data
-local timers = {}
-local results = {}
-local frameStart = 0
-local totalFrameTime = 0
-local frameAccumulators = {}  -- Accumulate time for substeps called multiple times per frame
+-- Metatable to make profile() callable
+local profile_meta = {__call = do_nothing}
+local profile = {draw = do_nothing}
+setmetatable(profile, profile_meta)
 
--- Start timing a section
-function profiler.start(name)
-    timers[name] = love.timer.getTime()
+local running = {}   -- Incomplete profiles (currently timing)
+local profiles = {}  -- Complete profiles for current frame
+local averages = {}  -- Rolling averages for each profile
+local AVERAGE_FRAMES = 10  -- Number of frames to average over
+
+-- High-resolution timer for profiling
+local function get_time()
+    return love.timer.getTime()
 end
 
--- Stop timing a section
-function profiler.stop(name)
-    if not timers[name] then
-        print("Warning: profiler.stop('" .. name .. "') called without start")
-        return
-    end
-
-    local elapsed = (love.timer.getTime() - timers[name]) * 1000 -- Convert to ms
-
-    -- Accumulate time for this frame (for substeps called multiple times)
-    if not frameAccumulators[name] then
-        frameAccumulators[name] = 0
-    end
-    frameAccumulators[name] = frameAccumulators[name] + elapsed
-
-    timers[name] = nil
+-- Start profiling a section
+local function start_profile(name)
+    running[name] = get_time()
 end
 
--- Start frame timing
-function profiler.startFrame()
-    frameStart = love.timer.getTime()
-    -- Reset accumulators for new frame
-    frameAccumulators = {}
-end
-
--- End frame timing
-function profiler.endFrame()
-    totalFrameTime = (love.timer.getTime() - frameStart) * 1000
-
-    -- Move accumulated times to results for this frame
-    for name, accumulated in pairs(frameAccumulators) do
-        if not results[name] then
-            results[name] = {
-                time = 0,
-                samples = {}
-            }
-        end
-
-        results[name].time = accumulated
-
-        -- Keep rolling average (last 60 samples)
-        table.insert(results[name].samples, accumulated)
-        if #results[name].samples > 60 then
-            table.remove(results[name].samples, 1)
-        end
-    end
-end
-
--- Get average time for a section
-local function getAverage(name)
-    if not results[name] then
-        return 0
-    end
-
-    local samples = results[name].samples
-    if #samples == 0 then
-        return 0
-    end
-
-    local sum = 0
-    for _, v in ipairs(samples) do
-        sum = sum + v
-    end
-
-    return sum / #samples
-end
-
--- Draw profiler info at a Y position, returns new Y position
-function profiler.draw(name, x, y, color)
-    x = x or 10
-    y = y or 10
-    color = color or {1, 1, 1}  -- Default white
-
-    local TARGET_FRAME_TIME = 1000 / 60  -- 16.67ms for 60 FPS
-
-    -- Save current color
-    local r, g, b, a = love.graphics.getColor()
-    love.graphics.setColor(color[1], color[2], color[3], 1)
-
-    if name == "total" then
-        -- Draw total frame time
-        local fps = love.timer.getFPS()
-        local percent = (totalFrameTime / TARGET_FRAME_TIME * 100)
-        love.graphics.print(string.format("Frame: %.2fms (%.0f FPS) %.1f%%", totalFrameTime, fps, percent), x, y)
-        love.graphics.setColor(r, g, b, a)
-        return y + 20
+-- Stop and record a profile
+local function stop_profile(name, delta)
+    local existing = profiles[name]
+    if existing then
+        existing.time = delta + existing.time
     else
-        -- Draw specific section
-        if not results[name] then
-            love.graphics.print(name .. ": No data", x, y)
-            love.graphics.setColor(r, g, b, a)
-            return y + 20
-        end
-
-        local avg = getAverage(name)
-        local percent = (avg / TARGET_FRAME_TIME * 100)
-
-        love.graphics.print(string.format("%s: %.2fms (%.1f%%)", name, avg, percent), x, y)
-        love.graphics.setColor(r, g, b, a)
-        return y + 20
+        profiles[name] = {
+            time = delta,
+            name = name,
+        }
+        table.insert(profiles, profiles[name])
     end
 end
 
--- Draw all profiler results
-function profiler.drawAll(x, y)
-    x = x or 10
-    y = y or 10
-
-    -- Draw individual sections
-    local sections = {}
-    for name, _ in pairs(results) do
-        table.insert(sections, name)
+-- Main profile function (called as profile("name") to start/stop)
+local function _profile(_, name)
+    local t = get_time()
+    local start_time = running[name]
+    if start_time then
+        local delta = t - start_time
+        stop_profile(name, delta)
+        running[name] = nil
+    else
+        start_profile(name)
     end
-    table.sort(sections)
+end
 
-    for _, name in ipairs(sections) do
-        y = profiler.draw(name, x, y)
+-- Update rolling averages at end of frame
+local function update_averages()
+    for _, prof in ipairs(profiles) do
+        local avg = averages[prof.name]
+        if not avg then
+            avg = {samples = {}, index = 1, sum = 0}
+            averages[prof.name] = avg
+        end
+
+        -- Remove old sample from sum
+        local old_sample = avg.samples[avg.index] or 0
+        avg.sum = avg.sum - old_sample
+
+        -- Add new sample
+        avg.samples[avg.index] = prof.time
+        avg.sum = avg.sum + prof.time
+
+        -- Advance ring buffer index
+        avg.index = (avg.index % AVERAGE_FRAMES) + 1
     end
 
-    -- Draw total at the end
-    y = y + 5
-    y = profiler.draw("total", x, y)
+    -- Clear profiles for next frame
+    profiles = {}
+end
 
-    return y
+-- Y offset for profiler display
+local profiler_y_offset = 10
+
+-- Draw CPU usage header
+local function draw_cpu()
+    local fps = love.timer.getFPS()
+    local dt = love.timer.getAverageDelta()
+    local cpu_percent = (dt / (1/60)) * 100
+
+    love.graphics.setColor(0, 0, 0, 1)
+    love.graphics.print(string.format("FPS:%d CPU:%.1f%%", fps, cpu_percent), 2, profiler_y_offset + 1)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.print(string.format("FPS:%d CPU:%.1f%%", fps, cpu_percent), 1, profiler_y_offset)
+end
+
+-- Draw detailed profile breakdown
+local function display_profiles()
+    update_averages()
+
+    local y = profiler_y_offset + 12
+    local frame_budget = 1/60
+
+    -- Sort profiles by name for consistent display
+    local sorted_names = {}
+    for name, _ in pairs(averages) do
+        table.insert(sorted_names, name)
+    end
+    table.sort(sorted_names)
+
+    -- Calculate total and draw each profile's average
+    local total_time = 0
+    for _, name in ipairs(sorted_names) do
+        local avg = averages[name]
+        local sample_count = math.min(#avg.samples, AVERAGE_FRAMES)
+        if sample_count > 0 then
+            local avg_time = avg.sum / sample_count
+            total_time = total_time + avg_time
+            local cpu_percent = (avg_time / frame_budget) * 100
+            local text = string.format("%s: %.1f%%", name, cpu_percent)
+
+            -- Check if this is a sub-item (starts with space)
+            local is_sub = name:sub(1, 1) == " "
+
+            love.graphics.setColor(0, 0, 0, 1)
+            love.graphics.print(text, 2, y + 1)
+            if is_sub then
+                -- Dark blue for sub-items
+                love.graphics.setColor(0.4, 0.6, 1.0, 1)
+            else
+                -- White for main items
+                love.graphics.setColor(1, 1, 1, 1)
+            end
+            love.graphics.print(text, 1, y)
+            y = y + 12
+        end
+    end
+
+    -- Draw total
+    local total_percent = (total_time / frame_budget) * 100
+    local total_text = string.format("TOTAL: %.1f%%", total_percent)
+    y = y + 4
+    love.graphics.setColor(0, 0, 0, 1)
+    love.graphics.print(total_text, 2, y + 1)
+    love.graphics.setColor(1, 1, 0, 1)  -- Yellow for total
+    love.graphics.print(total_text, 1, y)
+
+    -- Draw renderer stats
+    y = y + 16
+    local renderer = require("renderer_dda")
+    local stats = renderer.getStats()
+
+    -- Triangle and pixel counts
+    local countText = string.format("Tris: %d  Pix: %dk", stats.trianglesDrawn, math.floor(stats.pixelsDrawn / 1000))
+    love.graphics.setColor(0, 0, 0, 1)
+    love.graphics.print(countText, 2, y + 1)
+    love.graphics.setColor(0.7, 0.7, 0.7, 1)
+    love.graphics.print(countText, 1, y)
+
+    -- Transform vs Rasterize timing breakdown
+    y = y + 12
+    local transformMs = stats.timeTransform * 1000
+    local rasterMs = stats.timeRasterize * 1000
+    local transformPct = (stats.timeTransform / frame_budget) * 100
+    local rasterPct = (stats.timeRasterize / frame_budget) * 100
+    local timeText = string.format("Xform: %.1f%% Raster: %.1f%%", transformPct, rasterPct)
+    love.graphics.setColor(0, 0, 0, 1)
+    love.graphics.print(timeText, 2, y + 1)
+    love.graphics.setColor(0.6, 0.8, 0.6, 1)  -- Light green
+    love.graphics.print(timeText, 1, y)
+end
+
+-- Draw both CPU and detailed profiles
+local function display_both()
+    draw_cpu()
+    display_profiles()
+end
+
+-- Enable/disable profiling
+function profile.enabled(detailed, cpu)
+    profile_meta.__call = detailed and _profile or do_nothing
+    profile.draw = detailed and (cpu and display_both or display_profiles)
+        or (cpu and draw_cpu or do_nothing)
+end
+
+-- Toggle profiling on/off
+local profiler_enabled = false
+function profile.toggle()
+    profiler_enabled = not profiler_enabled
+    profile.enabled(profiler_enabled, profiler_enabled)
+    -- Clear averages when toggling
+    averages = {}
+    return profiler_enabled
+end
+
+-- Check if profiler is enabled
+function profile.is_enabled()
+    return profiler_enabled
 end
 
 -- Reset all profiler data
-function profiler.reset()
-    timers = {}
-    results = {}
-    totalFrameTime = 0
+function profile.reset()
+    running = {}
+    profiles = {}
+    averages = {}
 end
 
-return profiler
+return profile

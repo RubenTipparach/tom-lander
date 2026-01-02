@@ -218,6 +218,7 @@ function Ship:update_thrusters()
 end
 
 -- Update ship physics using quaternions (gimbal-lock free)
+-- Uses delta time for frame-rate independent physics
 function Ship:update(dt)
     -- Update thruster states
     self:update_thrusters()
@@ -225,8 +226,12 @@ function Ship:update(dt)
     -- Update damage blink timer
     self:update_damage_blink(dt)
 
-    -- Apply gravity (like Picotron: vtol.vy += vtol.gravity)
-    self.vy = self.vy + self.gravity
+    -- Scale factor for 60 FPS equivalence (physics tuned for 60 FPS)
+    -- This makes the simulation behave the same regardless of frame rate
+    local timeScale = dt * 60
+
+    -- Apply gravity (scaled by dt)
+    self.vy = self.vy + self.gravity * timeScale
 
     -- Apply thrust and torque for each active thruster
     for i, thruster in ipairs(self.thrusters) do
@@ -235,38 +240,45 @@ function Ship:update(dt)
             -- Transform by quaternion to get world space thrust
             local tx, ty, tz = quat.rotateVector(self.orientation, 0, 1, 0)
 
-            -- Apply thrust in world space
-            self.vx = self.vx + tx * self.thrust
-            self.vy = self.vy + ty * self.thrust
-            self.vz = self.vz + tz * self.thrust
+            -- Apply thrust in world space (scaled by dt)
+            self.vx = self.vx + tx * self.thrust * timeScale
+            self.vy = self.vy + ty * self.thrust * timeScale
+            self.vz = self.vz + tz * self.thrust * timeScale
 
-            -- Apply torque as angular velocity in LOCAL space
+            -- Apply torque as angular velocity in LOCAL space (scaled by dt)
             -- Thruster on front/back (z != 0) creates pitch around local X axis
             -- Thruster on left/right (x != 0) creates roll around local Z axis
-            -- These are accumulated as local-space angular velocities
-            self.local_vpitch = self.local_vpitch + thruster.z * gameConfig.VTOL_TORQUE_PITCH
-            self.local_vroll = self.local_vroll + (-thruster.x) * gameConfig.VTOL_TORQUE_ROLL
+            self.local_vpitch = self.local_vpitch + thruster.z * gameConfig.VTOL_TORQUE_PITCH * timeScale
+            self.local_vroll = self.local_vroll + (-thruster.x) * gameConfig.VTOL_TORQUE_ROLL * timeScale
         end
     end
 
-    -- Update position
-    self.x = self.x + self.vx
-    self.y = self.y + self.vy
-    self.z = self.z + self.vz
+    -- Update position (scaled by dt)
+    self.x = self.x + self.vx * timeScale
+    self.y = self.y + self.vy * timeScale
+    self.z = self.z + self.vz * timeScale
 
-    -- Update orientation using LOCAL angular velocities
+    -- Update orientation using LOCAL angular velocities (scaled by dt)
     -- Apply as local rotation: orientation = orientation * localRotation
-    local deltaRotation = quat.fromEuler(-self.local_vroll, -self.local_vyaw, -self.local_vpitch)
+    local deltaRotation = quat.fromEuler(
+        -self.local_vroll * timeScale,
+        -self.local_vyaw * timeScale,
+        -self.local_vpitch * timeScale
+    )
     self.orientation = quat.multiply(self.orientation, deltaRotation)
     self.orientation = quat.normalize(self.orientation)
 
-    -- Apply damping
-    self.vx = self.vx * self.damping
-    self.vy = self.vy * self.damping
-    self.vz = self.vz * self.damping
-    self.local_vpitch = self.local_vpitch * self.angular_damping
-    self.local_vyaw = self.local_vyaw * self.angular_damping
-    self.local_vroll = self.local_vroll * self.angular_damping
+    -- Apply damping (frame-rate independent using exponential decay)
+    -- damping^60 per second -> damping^(60*dt) per frame
+    local dampingFactor = math.pow(self.damping, timeScale)
+    local angularDampingFactor = math.pow(self.angular_damping, timeScale)
+
+    self.vx = self.vx * dampingFactor
+    self.vy = self.vy * dampingFactor
+    self.vz = self.vz * dampingFactor
+    self.local_vpitch = self.local_vpitch * angularDampingFactor
+    self.local_vyaw = self.local_vyaw * angularDampingFactor
+    self.local_vroll = self.local_vroll * angularDampingFactor
 
     -- Height ceiling (like Picotron: 50 world units = 500m)
     local max_height = 50
@@ -285,7 +297,9 @@ end
 -- Auto-level the ship (smoothly returns to upright orientation)
 -- Called when shift key is held
 function Ship:auto_level(dt)
-    local level_speed = 0.05  -- How fast to level out
+    -- Frame-rate independent lerp factor (tuned for 60 FPS base)
+    local timeScale = dt * 60
+    local level_speed = 1.0 - math.pow(0.95, timeScale)
 
     -- Extract the ship's forward direction from the quaternion
     -- This is more robust than extracting Euler angles when pitch/roll are non-zero
@@ -302,13 +316,14 @@ function Ship:auto_level(dt)
     -- Create target orientation with same yaw but zero pitch/roll
     local target = quat.fromAxisAngle(0, 1, 0, yaw)
 
-    -- Slerp towards target orientation
+    -- Slerp towards target orientation (frame-rate independent)
     self.orientation = quat.slerp(self.orientation, target, level_speed)
     self.orientation = quat.normalize(self.orientation)
 
-    -- Also dampen angular velocities heavily
-    self.local_vpitch = self.local_vpitch * 0.8
-    self.local_vroll = self.local_vroll * 0.8
+    -- Also dampen angular velocities heavily (frame-rate independent)
+    local angularDamping = math.pow(0.8, timeScale)
+    self.local_vpitch = self.local_vpitch * angularDamping
+    self.local_vroll = self.local_vroll * angularDamping
 end
 
 -- Draw ship using the renderer

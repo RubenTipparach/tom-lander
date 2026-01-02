@@ -18,6 +18,7 @@ local Cargo = require("cargo")
 local Collision = require("collision")
 local Trees = require("trees")
 local Skydome = require("skydome")
+local profile = require("profiler")
 
 local flight_scene = {}
 
@@ -34,7 +35,7 @@ local follow_camera = true
 -- Note: Picotron runs at 60fps and applies lerp per-frame
 local camera_lerp_speed = 0.1  -- How fast camera catches up
 local cam_dist = -5 -- Positive = camera behind ship (matching Picotron)
-local cam_rot_speed = 0.01  -- Camera rotation speed per frame
+local cam_rot_speed = 0.03  -- Camera rotation speed per frame
 local mouse_sensitivity = 0.003  -- Mouse sensitivity for camera rotation
 local last_mouse_x, last_mouse_y = 0, 0
 local mouse_camera_enabled = false  -- Toggle with right mouse button
@@ -186,6 +187,8 @@ function flight_scene.load()
 end
 
 function flight_scene.update(dt)
+    profile("update")
+
     -- Update ship physics
     ship:update(dt)
 
@@ -323,18 +326,19 @@ function flight_scene.update(dt)
         ship:auto_level(dt)
     end
 
-    -- Camera rotation with arrow keys
+    -- Camera rotation with arrow keys (frame-rate independent)
+    local timeScale = dt * 60  -- Scale for 60 FPS equivalence
     if love.keyboard.isDown("left") then
-        cam.yaw = cam.yaw - cam_rot_speed
+        cam.yaw = cam.yaw - cam_rot_speed * timeScale
     end
     if love.keyboard.isDown("right") then
-        cam.yaw = cam.yaw + cam_rot_speed
+        cam.yaw = cam.yaw + cam_rot_speed * timeScale
     end
     if love.keyboard.isDown("up") then
-        cam.pitch = cam.pitch - cam_rot_speed * 0.6  -- Pitch up
+        cam.pitch = cam.pitch - cam_rot_speed * 0.6 * timeScale  -- Pitch up
     end
     if love.keyboard.isDown("down") then
-        cam.pitch = cam.pitch + cam_rot_speed * 0.6  -- Pitch down
+        cam.pitch = cam.pitch + cam_rot_speed * 0.6 * timeScale  -- Pitch down
     end
 
     -- Mouse camera control (hold left or right mouse button to rotate)
@@ -354,21 +358,26 @@ function flight_scene.update(dt)
     end
     last_mouse_x, last_mouse_y = mouse_x, mouse_y
 
-    -- Camera follows ship with smooth lerp (exactly like Picotron)
+    -- Camera follows ship with smooth lerp (frame-rate independent)
     -- Target is ship position directly
     local target_x = ship.x
     local target_y = ship.y
     local target_z = ship.z
 
+    -- Frame-rate independent lerp: 1 - (1-speed)^(dt*60)
+    local lerpFactor = 1.0 - math.pow(1.0 - camera_lerp_speed, timeScale)
+
     -- Smoothly move camera toward target
-    cam.pos.x = cam.pos.x + (target_x - cam.pos.x) * camera_lerp_speed
-    cam.pos.y = cam.pos.y + (target_y - cam.pos.y) * camera_lerp_speed
-    cam.pos.z = cam.pos.z + (target_z - cam.pos.z) * camera_lerp_speed
+    cam.pos.x = cam.pos.x + (target_x - cam.pos.x) * lerpFactor
+    cam.pos.y = cam.pos.y + (target_y - cam.pos.y) * lerpFactor
+    cam.pos.z = cam.pos.z + (target_z - cam.pos.z) * lerpFactor
 
     camera_module.updateVectors(cam)
+    profile("update")
 end
 
 function flight_scene.draw()
+    profile("clear")
     -- Set clear color and clear buffers
     renderer.clearBuffers()
 
@@ -376,120 +385,66 @@ function flight_scene.draw()
     local viewMatrix = camera_module.getViewMatrix(cam, cam_dist)
     local mvpMatrix = mat4.multiply(projMatrix, viewMatrix)
     renderer.setMatrices(mvpMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+    profile("clear")
 
     -- Draw skydome FIRST (always behind everything, follows camera)
+    profile(" skydome")
     Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+    profile(" skydome")
 
-    -- Draw terrain
-    Heightmap.draw(renderer, cam.pos.x, cam.pos.z, nil, 80)
+    -- Draw terrain (pass camera yaw for frustum culling)
+    profile(" terrain")
+    Heightmap.draw(renderer, cam.pos.x, cam.pos.z, nil, 80, cam.yaw)
+    profile(" terrain")
 
-    -- Draw trees (with distance culling)
-    Trees.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+    -- Draw trees (with distance and frustum culling)
+    profile(" trees")
+    Trees.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, cam.yaw)
+    profile(" trees")
 
     -- Draw buildings
+    profile(" buildings")
     for _, building in ipairs(buildings) do
         Building.draw(building, renderer, cam.pos.x, cam.pos.z)
     end
+    profile(" buildings")
 
     -- Draw landing pads
+    profile(" pads")
     LandingPads.draw_all(renderer, cam.pos.x, cam.pos.z)
+    profile(" pads")
 
     -- Draw cargo
+    profile(" cargo")
     for _, cargo in ipairs(cargo_items) do
         Cargo.draw(cargo, renderer, cam.pos.x, cam.pos.z)
     end
+    profile(" cargo")
 
     -- Draw ship
+    profile(" ship")
     ship:draw(renderer)
+    profile(" ship")
 
     -- Draw smoke particles (disabled - billboard rendering needs fixing)
     -- smoke_system:draw(renderer, cam)
 
     -- Draw speed lines (depth-tested 3D lines)
+    profile(" speedlines")
     speed_lines:draw(renderer, cam)
-
-    -- Draw thruster key labels at 3D positions (in software renderer)
-    local shipRotationMatrix = ship:get_rotation_matrix()
-    local labelMVP = mat4.multiply(projMatrix, viewMatrix)
-
-    for i, thruster in ipairs(ship.thrusters) do
-        -- Get engine position from ship (matches where flames are rendered)
-        local engine = ship.engine_positions[i]
-
-        -- Build the same transform as the ship model matrix
-        local localX = engine.x * ship.model_scale
-        local localY = engine.y * ship.model_scale + 1.0  -- Offset 1 unit above flame
-        local localZ = engine.z * ship.model_scale
-
-        -- Apply ship rotation using quaternion (no gimbal lock)
-        local shipMatrix = mat4.multiply(shipRotationMatrix, mat4.scale(1, 1, 1))
-        shipMatrix = mat4.multiply(mat4.translation(ship.x, ship.y, ship.z), shipMatrix)
-
-        -- Transform local position to world space
-        local worldPos = mat4.multiplyVec4(shipMatrix, {localX, localY, localZ, 1})
-
-        -- Transform to clip space using MVP
-        local clipPos = mat4.multiplyVec4(labelMVP, {worldPos[1], worldPos[2], worldPos[3], 1})
-
-        -- Only draw if in front of camera
-        if clipPos[4] > 0.1 then
-            -- Perspective divide and screen mapping (same as renderer)
-            local sx = (clipPos[1] / clipPos[4] + 1) * config.RENDER_WIDTH * 0.5
-            local sy = (1 - clipPos[2] / clipPos[4]) * config.RENDER_HEIGHT * 0.5
-
-            -- Draw big key letter at thruster position with drop shadow
-            local r, g, b = 255, 255, 255
-            if thruster.active then r, g, b = 255, 0, 0 end
-            renderer.drawText(sx - 4, sy - 5, thruster.key, r, g, b, 2, true)
-        end
-    end
-
-    -- Draw HUD text (in software renderer, before replacePixels)
-    renderer.drawText(2, 2, "TOM LANDER", 255, 255, 255, 1, true)
-    renderer.drawText(2, 10, string.format("Health: %d%%", ship.health), 255, 255, 255, 1, true)
-    renderer.drawText(2, 18, string.format("Altitude: %.1f", ship.y - Heightmap.get_height(ship.x, ship.z)), 255, 255, 255, 1, true)
-    renderer.drawText(2, 26, string.format("Velocity: %.2f", math.sqrt(ship.vx^2 + ship.vy^2 + ship.vz^2)), 255, 255, 255, 1, true)
-
-    -- Cargo status
-    local cargo_status = "Cargo: "
-    if cargo_items[1].state == "idle" then
-        cargo_status = cargo_status .. "Available"
-    elseif cargo_items[1].state == "tethering" then
-        cargo_status = cargo_status .. "Picking up..."
-    elseif cargo_items[1].state == "attached" then
-        cargo_status = cargo_status .. "Attached"
-    elseif cargo_items[1].state == "delivered" then
-        cargo_status = cargo_status .. "Delivered!"
-    end
-    renderer.drawText(2, 34, cargo_status, 255, 255, 255, 1, true)
-
-    -- Thruster indicators
-    renderer.drawText(2, 44, "Thrusters:", 255, 255, 255, 1, true)
-    local thruster_labels = {"A", "D", "W", "S"}
-    local thruster_str = ""
-    for i, thruster in ipairs(ship.thrusters) do
-        if thruster.active then
-            thruster_str = thruster_str .. "[" .. thruster_labels[i] .. "]"
-        else
-            thruster_str = thruster_str .. " " .. thruster_labels[i] .. " "
-        end
-    end
-    renderer.drawText(2, 52, thruster_str, 255, 255, 255, 1, true)
-
-    -- Controls hint (gray text at bottom)
-    renderer.drawText(2, config.RENDER_HEIGHT - 8, "Arrows: Camera | Shift: Level", 160, 160, 160, 1, true)
-
-    -- Stats (top-right, below minimap)
-    local stats = renderer.getStats()
-    renderer.drawText(config.RENDER_WIDTH - 50, Minimap.Y + Minimap.SIZE + 8, string.format("Tris:%d", stats.trianglesDrawn), 255, 255, 255, 1, true)
-    renderer.drawText(config.RENDER_WIDTH - 50, Minimap.Y + Minimap.SIZE + 16, string.format("FPS:%d", love.timer.getFPS()), 255, 255, 255, 1, true)
+    profile(" speedlines")
 
     -- Draw minimap
+    profile(" minimap")
     Minimap.draw(renderer, Heightmap, ship, LandingPads, cargo_items)
+    profile(" minimap")
 
+    profile("blit")
     -- Update and draw the software rendered image
     softwareImage:replacePixels(renderer.getImageData())
+    profile("blit")
 
+    profile("present")
     -- Get actual window size for dynamic scaling
     local windowWidth, windowHeight = love.graphics.getDimensions()
 
@@ -506,6 +461,7 @@ function flight_scene.draw()
     love.graphics.clear(0, 0, 0, 1)
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
+    profile("present")
 end
 
 function flight_scene.keypressed(key)

@@ -87,14 +87,24 @@ function Trees.generate(Heightmap)
     return trees
 end
 
--- Draw all trees with distance culling
-function Trees.draw(renderer, cam_x, cam_y, cam_z)
+-- Cached texture data
+local cached_tex_data = nil
+
+-- Draw all trees with distance and frustum culling
+function Trees.draw(renderer, cam_x, cam_y, cam_z, cam_yaw)
     if not tree_mesh then return end
 
-    local texData = Constants.getTextureData(Constants.SPRITE_TREES)
-    if not texData then return end
+    -- Cache texture data once
+    if not cached_tex_data then
+        cached_tex_data = Constants.getTextureData(Constants.SPRITE_TREES)
+    end
+    if not cached_tex_data then return end
 
     local render_dist_sq = config.RENDER_DISTANCE * config.RENDER_DISTANCE
+
+    -- Pre-cache mesh data for inner loop
+    local mesh_triangles = tree_mesh.triangles
+    local mesh_vertices = tree_mesh.vertices
 
     for _, tree in ipairs(trees) do
         -- Distance culling - skip trees beyond render distance
@@ -107,24 +117,29 @@ function Trees.draw(renderer, cam_x, cam_y, cam_z)
             local distance = math.sqrt(dist_sq)
             local fogFactor = renderer.calcFogFactor(distance)
 
+            -- Cache tree position for inner loop
+            local tree_x, tree_y, tree_z = tree.x, tree.y, tree.z
+
             -- Draw each triangle of the tree mesh (OBJ loader format)
-            for _, tri in ipairs(tree_mesh.triangles) do
-                local v1 = tree_mesh.vertices[tri[1]]
-                local v2 = tree_mesh.vertices[tri[2]]
-                local v3 = tree_mesh.vertices[tri[3]]
+            for _, tri in ipairs(mesh_triangles) do
+                local v1 = mesh_vertices[tri[1]]
+                local v2 = mesh_vertices[tri[2]]
+                local v3 = mesh_vertices[tri[3]]
 
                 -- Offset vertices by tree position
                 renderer.drawTriangle3D(
-                    {pos = {v1.pos[1] + tree.x, v1.pos[2] + tree.y, v1.pos[3] + tree.z}, uv = v1.uv},
-                    {pos = {v2.pos[1] + tree.x, v2.pos[2] + tree.y, v2.pos[3] + tree.z}, uv = v2.uv},
-                    {pos = {v3.pos[1] + tree.x, v3.pos[2] + tree.y, v3.pos[3] + tree.z}, uv = v3.uv},
+                    {pos = {v1.pos[1] + tree_x, v1.pos[2] + tree_y, v1.pos[3] + tree_z}, uv = v1.uv},
+                    {pos = {v2.pos[1] + tree_x, v2.pos[2] + tree_y, v2.pos[3] + tree_z}, uv = v2.uv},
+                    {pos = {v3.pos[1] + tree_x, v3.pos[2] + tree_y, v3.pos[3] + tree_z}, uv = v3.uv},
                     nil,
-                    texData,
+                    cached_tex_data,
                     nil,  -- brightness
                     fogFactor
                 )
             end
         end
+
+        ::continue_tree::
     end
 end
 
