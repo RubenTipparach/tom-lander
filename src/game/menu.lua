@@ -626,7 +626,8 @@ function menu.draw()
     love.graphics.clear(0, 0, 0)
 
     -- Render 3D background (clear to black)
-    renderer.clearBuffersBlack()
+    renderer.setClearColor(0, 0, 0)
+    renderer.clearBuffers()
 
     -- Build view matrix with debug rotation
     local viewMatrix = camera_module.getViewMatrix(cam)
@@ -643,12 +644,10 @@ function menu.draw()
     end
 
     -- Draw clouds on top (larger sphere, black pixels transparent)
-    -- Use 50% dither pattern like Picotron
+    -- Dithering disabled for old renderer compatibility
     local cloudTexData = Constants.getTextureData(Constants.SPRITE_CLOUDS)
     if cloudTexData then
-        renderer.setDitherPattern(0x5A5A)  -- 50% checkerboard (0b0101101001011010)
         menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData)
-        renderer.resetDitherPattern()
     end
 
     -- Draw ship with thrusters
@@ -670,7 +669,7 @@ function menu.draw()
         local z2 = z1 + dir_z * space_line.length
 
         local c = Palette.colors[space_line.color] or Palette.colors[7]
-        renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3], true)  -- skipZBuffer = true
+        renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3])
     end
 
     -- Update and display software rendered image
@@ -801,8 +800,7 @@ function menu.draw_ship()
         -- Engine positions relative to ship (in ship local space)
         local engine_positions = {ENGINE_RIGHT, ENGINE_LEFT, ENGINE_FRONT, ENGINE_BACK}
 
-        -- Set 50% dither pattern for flames
-        renderer.setDitherPattern(0x5A5A)
+        -- Dithering disabled for old renderer compatibility
 
         for engine_idx, engine in ipairs(engine_positions) do
             -- Flickering scale
@@ -837,8 +835,6 @@ function menu.draw_ship()
                 )
             end
         end
-
-        renderer.resetDitherPattern()
     end
 end
 

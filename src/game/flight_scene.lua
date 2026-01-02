@@ -174,6 +174,10 @@ function flight_scene.load()
     renderer.setFog(true, config.FOG_START_DISTANCE, config.RENDER_DISTANCE,
         config.FOG_COLOR[1], config.FOG_COLOR[2], config.FOG_COLOR[3])
 
+    -- Reset renderer state (menu may have changed these)
+    renderer.setClearColor(162, 136, 121)
+    --renderer.resetDitherPattern()
+
     print("Flight scene loaded")
     print("Controls:")
     print("  W/A/S/D or I/J/K/L - Thrusters")
