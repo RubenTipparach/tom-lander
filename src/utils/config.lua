@@ -4,6 +4,12 @@
 local config = {}
 
 -- ===========================================
+-- MENU SETTINGS
+-- ===========================================
+config.MENU_3D_ENABLED = true  -- Set to true to enable 3D menu background (planet, ship, starfield)
+config.SET_CLEAR_COLOR = false  -- Set to true to call setClearColor in flight_scene.load() (causes FPS drop)
+
+-- ===========================================
 -- RENDER SETTINGS
 -- ===========================================
 

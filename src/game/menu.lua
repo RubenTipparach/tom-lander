@@ -372,92 +372,95 @@ function menu.load()
 
     menu.update_options()
 
-    -- Initialize renderer
-    renderer.init(config.RENDER_WIDTH, config.RENDER_HEIGHT)
-    softwareImage = love.graphics.newImage(renderer.getImageData())
+    -- Only initialize 3D rendering if enabled in config
+    if config.MENU_3D_ENABLED then
+        -- Renderer already initialized in main.lua
+        softwareImage = love.graphics.newImage(renderer.getImageData())
+        softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
 
-    -- Create projection matrix
-    local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
-    projMatrix = mat4.perspective(config.FOV, aspect, config.NEAR_PLANE, config.FAR_PLANE)
+        -- Create projection matrix
+        local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
+        projMatrix = mat4.perspective(config.FOV, aspect, config.NEAR_PLANE, config.FAR_PLANE)
 
-    -- Create camera
-    cam = camera_module.new(0, 0, 0)
-    cam.pitch = 0
-    cam.yaw = 0
-    camera_module.updateVectors(cam)
+        -- Create camera
+        cam = camera_module.new(0, 0, 0)
+        cam.pitch = 0
+        cam.yaw = 0
+        camera_module.updateVectors(cam)
 
-    -- Disable fog for menu (clear color is passed to clearBuffers() in draw)
-    renderer.setFog(false)
+        -- Disable fog for menu (clear color is passed to clearBuffers() in draw)
+        renderer.setFog(false)
 
-    -- Generate planet sphere
-    local planet_verts, planet_faces = generate_sphere(Constants.SPRITE_PLANET)
-    menu.planet = {
-        verts = planet_verts,
-        faces = planet_faces,
-        x = PLANET_X,
-        y = PLANET_Y,
-        z = PLANET_Z,
-        rotation = 0,
-        scale = PLANET_SCALE
-    }
-
-    -- Scale planet vertices
-    for i, v in ipairs(menu.planet.verts) do
-        menu.planet.verts[i] = {
-            x = v.x * PLANET_SCALE,
-            y = v.y * PLANET_SCALE,
-            z = v.z * PLANET_SCALE
+        -- Generate planet sphere
+        local planet_verts, planet_faces = generate_sphere(Constants.SPRITE_PLANET)
+        menu.planet = {
+            verts = planet_verts,
+            faces = planet_faces,
+            x = PLANET_X,
+            y = PLANET_Y,
+            z = PLANET_Z,
+            rotation = 0,
+            scale = PLANET_SCALE
         }
-    end
 
-    -- Generate cloud sphere
-    local cloud_verts, cloud_faces = generate_sphere(Constants.SPRITE_CLOUDS)
-    local cloud_scale = PLANET_SCALE + CLOUD_SCALE_OFFSET
-    menu.clouds = {
-        verts = cloud_verts,
-        faces = cloud_faces,
-        x = PLANET_X,
-        y = PLANET_Y,
-        z = PLANET_Z,
-        rotation = 0,
-        scale = cloud_scale
-    }
+        -- Scale planet vertices
+        for i, v in ipairs(menu.planet.verts) do
+            menu.planet.verts[i] = {
+                x = v.x * PLANET_SCALE,
+                y = v.y * PLANET_SCALE,
+                z = v.z * PLANET_SCALE
+            }
+        end
 
-    -- Scale cloud vertices
-    for i, v in ipairs(menu.clouds.verts) do
-        menu.clouds.verts[i] = {
-            x = v.x * cloud_scale,
-            y = v.y * cloud_scale,
-            z = v.z * cloud_scale
+        -- Generate cloud sphere
+        local cloud_verts, cloud_faces = generate_sphere(Constants.SPRITE_CLOUDS)
+        local cloud_scale = PLANET_SCALE + CLOUD_SCALE_OFFSET
+        menu.clouds = {
+            verts = cloud_verts,
+            faces = cloud_faces,
+            x = PLANET_X,
+            y = PLANET_Y,
+            z = PLANET_Z,
+            rotation = 0,
+            scale = cloud_scale
         }
-    end
 
-    -- Initialize space lines
-    menu.space_lines = {}
-    for i = 1, STARFIELD_COUNT do
-        menu.add_space_line()
-    end
+        -- Scale cloud vertices
+        for i, v in ipairs(menu.clouds.verts) do
+            menu.clouds.verts[i] = {
+                x = v.x * cloud_scale,
+                y = v.y * cloud_scale,
+                z = v.z * cloud_scale
+            }
+        end
 
-    -- Load ship mesh
-    local success, result = pcall(function()
-        return obj_loader.load("assets/cross_lander.obj")
-    end)
-    if success and result then
-        menu.ship_mesh = result
-        print("Menu: Ship mesh loaded: " .. #result.vertices .. " vertices")
-    else
-        print("Menu: Could not load ship mesh: " .. tostring(result))
-    end
+        -- Initialize space lines
+        menu.space_lines = {}
+        for i = 1, STARFIELD_COUNT do
+            menu.add_space_line()
+        end
 
-    -- Load flame mesh
-    success, result = pcall(function()
-        return obj_loader.load("assets/flame.obj")
-    end)
-    if success and result then
-        menu.flame_mesh = result
-        print("Menu: Flame mesh loaded: " .. #result.vertices .. " vertices")
-    else
-        print("Menu: Could not load flame mesh: " .. tostring(result))
+        -- Load ship mesh
+        local success, result = pcall(function()
+            return obj_loader.load("assets/cross_lander.obj")
+        end)
+        if success and result then
+            menu.ship_mesh = result
+            print("Menu: Ship mesh loaded: " .. #result.vertices .. " vertices")
+        else
+            print("Menu: Could not load ship mesh: " .. tostring(result))
+        end
+
+        -- Load flame mesh
+        success, result = pcall(function()
+            return obj_loader.load("assets/flame.obj")
+        end)
+        if success and result then
+            menu.flame_mesh = result
+            print("Menu: Flame mesh loaded: " .. #result.vertices .. " vertices")
+        else
+            print("Menu: Could not load flame mesh: " .. tostring(result))
+        end
     end
 
     -- Load logo image (texture 65) with nearest neighbor filtering for pixel art
@@ -519,6 +522,9 @@ end
 function menu.update(dt)
     if not menu.active then return end
 
+    -- Only update 3D elements if enabled
+    if not config.MENU_3D_ENABLED then return end
+
     -- Debug camera controls (arrow keys)
     -- local cam_speed = 1.0 * dt
     -- if love.keyboard.isDown("left") then
@@ -566,7 +572,7 @@ function menu.keypressed(key)
 
     -- Title screen - press to continue
     if not menu.show_options and not menu.show_mode_select then
-        if key == "z" or key == "x" or key == "return" or key == "space" then
+        if key == "z" or key == "x" or key == "return" then
             menu.show_options = true
         end
         return
@@ -622,59 +628,6 @@ end
 function menu.draw()
     if not menu.active then return end
 
-    -- Clear to black
-    love.graphics.clear(0, 0, 0)
-
-    -- Render 3D background (clear to black)
-    renderer.setClearColor(0, 0, 0)
-    renderer.clearBuffers()
-
-    -- Build view matrix with debug rotation
-    local viewMatrix = camera_module.getViewMatrix(cam)
-    -- Apply debug camera rotation
-    local debugRotMatrix = mat4.multiply(mat4.rotationY(debug_cam_yaw), mat4.rotationX(debug_cam_pitch))
-    viewMatrix = mat4.multiply(viewMatrix, debugRotMatrix)
-    local mvpMatrix = mat4.multiply(projMatrix, viewMatrix)
-    renderer.setMatrices(mvpMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
-
-    -- Draw planet first (smaller sphere, solid)
-    local planetTexData = Constants.getTextureData(Constants.SPRITE_PLANET)
-    if planetTexData then
-        menu.draw_sphere(menu.planet, PLANET_PITCH, PLANET_YAW + menu.planet.rotation, PLANET_ROLL, planetTexData)
-    end
-
-    -- Draw clouds on top (larger sphere, black pixels transparent)
-    -- Dithering disabled for old renderer compatibility
-    local cloudTexData = Constants.getTextureData(Constants.SPRITE_CLOUDS)
-    if cloudTexData then
-        menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData)
-    end
-
-    -- Draw ship with thrusters
-    menu.draw_ship()
-
-    -- Draw space lines LAST, as background (skipZBuffer = true)
-    -- They only draw where nothing else has been drawn (clear pixels)
-    local dir_x, dir_y, dir_z = get_starfield_direction()
-
-    for _, space_line in ipairs(menu.space_lines) do
-        -- Start point in world space
-        local x1 = space_line.x
-        local y1 = space_line.y
-        local z1 = space_line.z
-
-        -- End point extends in the direction of movement
-        local x2 = x1 + dir_x * space_line.length
-        local y2 = y1 + dir_y * space_line.length
-        local z2 = z1 + dir_z * space_line.length
-
-        local c = Palette.colors[space_line.color] or Palette.colors[7]
-        renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3])
-    end
-
-    -- Update and display software rendered image
-    softwareImage:replacePixels(renderer.getImageData())
-
     -- Get current window dimensions
     local windowWidth, windowHeight = love.graphics.getDimensions()
 
@@ -687,29 +640,99 @@ function menu.draw()
     local offsetX = (windowWidth - config.RENDER_WIDTH * scale) / 2
     local offsetY = (windowHeight - config.RENDER_HEIGHT * scale) / 2
 
-    -- Clear to black for letterboxing
+    -- Clear to black
     love.graphics.clear(0, 0, 0, 1)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
 
-    -- Draw UI on top (scaled to match render resolution)
-    -- All UI code uses config.RENDER_WIDTH/HEIGHT (480x270) as source of truth
-    love.graphics.push()
-    love.graphics.translate(offsetX, offsetY)
-    love.graphics.scale(scale, scale)
+    -- Only render 3D background if enabled
+    if config.MENU_3D_ENABLED then
+        -- Render 3D background (clear to black)
+        renderer.setClearColor(0, 0, 0)
+        renderer.clearBuffers()
 
-    if menu.show_mode_select then
-        -- Mode selection screen
-        menu.draw_mode_select()
-    elseif menu.show_options then
-        -- Mission selection screen
-        menu.draw_options()
-    else
-        -- Title screen with logo
-        menu.draw_title()
+        -- Build view matrix with debug rotation
+        local viewMatrix = camera_module.getViewMatrix(cam)
+        -- Apply debug camera rotation
+        local debugRotMatrix = mat4.multiply(mat4.rotationY(debug_cam_yaw), mat4.rotationX(debug_cam_pitch))
+        viewMatrix = mat4.multiply(viewMatrix, debugRotMatrix)
+        local mvpMatrix = mat4.multiply(projMatrix, viewMatrix)
+        renderer.setMatrices(mvpMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+
+        -- Draw planet first (smaller sphere, solid)
+        local planetTexData = Constants.getTextureData(Constants.SPRITE_PLANET)
+        if planetTexData then
+            menu.draw_sphere(menu.planet, PLANET_PITCH, PLANET_YAW + menu.planet.rotation, PLANET_ROLL, planetTexData)
+        end
+
+        -- Draw clouds on top (larger sphere, black pixels transparent)
+        -- Dithering disabled for old renderer compatibility
+        local cloudTexData = Constants.getTextureData(Constants.SPRITE_CLOUDS)
+        if cloudTexData then
+            menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData)
+        end
+
+        -- Draw ship with thrusters
+        menu.draw_ship()
+
+        -- Draw space lines LAST, as background (skipZBuffer = true)
+        -- They only draw where nothing else has been drawn (clear pixels)
+        local dir_x, dir_y, dir_z = get_starfield_direction()
+
+        for _, space_line in ipairs(menu.space_lines) do
+            -- Start point in world space
+            local x1 = space_line.x
+            local y1 = space_line.y
+            local z1 = space_line.z
+
+            -- End point extends in the direction of movement
+            local x2 = x1 + dir_x * space_line.length
+            local y2 = y1 + dir_y * space_line.length
+            local z2 = z1 + dir_z * space_line.length
+
+            local c = Palette.colors[space_line.color] or Palette.colors[7]
+            renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3])
+        end
+
+        -- Draw UI text to software framebuffer BEFORE replacePixels
+        if menu.show_mode_select then
+            menu.draw_mode_select()
+        elseif menu.show_options then
+            menu.draw_options()
+        else
+            menu.draw_title()
+        end
+
+        -- Update and display software rendered image
+        softwareImage:replacePixels(renderer.getImageData())
+
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
     end
 
-    love.graphics.pop()
+    -- Draw logo on top (Love2D image, drawn after software render)
+    if not menu.show_options and not menu.show_mode_select then
+        -- Title screen - draw logo
+        if logoImage then
+            love.graphics.push()
+            love.graphics.translate(offsetX, offsetY)
+            love.graphics.scale(scale, scale)
+
+            local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
+            local logo_w, logo_h = logoImage:getDimensions()
+            local logo_scale = 1.5
+            local scaled_w = logo_w * logo_scale
+            local scaled_h = logo_h * logo_scale
+            local logo_x = (w - scaled_w) / 2
+            local logo_y = (h - scaled_h) / 2 - 20
+
+            -- Use shader to make black transparent
+            love.graphics.setShader(blackTransparentShader)
+            love.graphics.setColor(1, 1, 1, 1)
+            love.graphics.draw(logoImage, logo_x, logo_y, 0, logo_scale, logo_scale)
+            love.graphics.setShader()
+
+            love.graphics.pop()
+        end
+    end
 end
 
 -- Draw sphere mesh
@@ -838,54 +861,29 @@ function menu.draw_ship()
     end
 end
 
--- Draw title screen
+-- Draw title screen (uses software renderer pixel font)
 function menu.draw_title()
     -- Use render resolution as source of truth (480x270)
     local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
 
-    -- Draw logo if available (texture 65)
-    if logoImage then
-        local logo_w, logo_h = logoImage:getDimensions()
-        local logo_scale = 1.5
-        local scaled_w = logo_w * logo_scale
-        local scaled_h = logo_h * logo_scale
-        local logo_x = (w - scaled_w) / 2
-        local logo_y = (h - scaled_h) / 2 - 20
+    -- Draw logo if available (texture 65) - this is drawn to Love2D canvas after replacePixels
+    -- We'll handle this separately in draw()
 
-        -- Use shader to make black transparent
-        love.graphics.setShader(blackTransparentShader)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.draw(logoImage, logo_x, logo_y, 0, logo_scale, logo_scale)
-        love.graphics.setShader()  -- Reset shader
-    else
-        -- Fallback text title
-        love.graphics.setColor(1, 1, 1)
-        love.graphics.setFont(love.graphics.newFont(16))
-        love.graphics.printf("THE RETURN OF TOM LANDER", 0, h / 2 - 30, w, "center")
-    end
-
-    -- Draw "press Z to start" hint
-    love.graphics.setFont(love.graphics.newFont(8))
+    -- Draw "press Z to start" hint using pixel font
     local hint = "[Z] to start"
-    local hint_y = h * 0.75
+    local hint_y = math.floor(h * 0.75)
+    local hint_x = math.floor((w - #hint * 5) / 2)  -- Center based on 5px char width
 
-    -- Drop shadow
-    love.graphics.setColor(0, 0, 0)
-    love.graphics.printf(hint, 1, hint_y + 1, w, "center")
-    -- Main text (dark blue color 1)
-    local r, g, b = getPaletteColor(1)
-    love.graphics.setColor(r, g, b)
-    love.graphics.printf(hint, 0, hint_y, w, "center")
+    -- Get palette color (dark blue color 1)
+    local c = Palette.colors[1] or Palette.colors[7]
+    renderer.drawText(hint_x, hint_y, hint, c[1], c[2], c[3], 1, true)
 end
 
--- Draw mission options screen
+-- Draw mission options screen (uses software renderer pixel font)
 function menu.draw_options()
     -- Use render resolution as source of truth (480x270)
     local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
 
-    love.graphics.setFont(love.graphics.newFont(8))
-
-    local menu_x = w / 2
     local menu_y = 40
 
     -- Calculate box dimensions
@@ -901,70 +899,76 @@ function menu.draw_options()
     end
     local box_width = math.max(title_width, max_option_width) + box_padding * 2 + 20
     local box_height = 20 + #menu.options * 12 + box_padding * 2
-    local box_x = menu_x - box_width / 2
+    local box_x = math.floor((w - box_width) / 2)
     local box_y = menu_y - box_padding
 
-    -- Draw dithered background (semi-transparent dark box)
-    love.graphics.setColor(0.1, 0.15, 0.3, 0.7)
-    love.graphics.rectangle("fill", box_x, box_y, box_width, box_height)
+    -- Draw box background using pixel drawing (dark blue-ish)
+    for y = box_y, box_y + box_height - 1 do
+        for x = box_x, box_x + box_width - 1 do
+            renderer.drawPixel(x, y, 25, 38, 77)
+        end
+    end
 
     -- Draw border
-    local r, g, b = getPaletteColor(6)
-    love.graphics.setColor(r, g, b)
-    love.graphics.rectangle("line", box_x, box_y, box_width, box_height)
+    local bc = Palette.colors[6] or {200, 200, 200}
+    for x = box_x, box_x + box_width - 1 do
+        renderer.drawPixel(x, box_y, bc[1], bc[2], bc[3])
+        renderer.drawPixel(x, box_y + box_height - 1, bc[1], bc[2], bc[3])
+    end
+    for y = box_y, box_y + box_height - 1 do
+        renderer.drawPixel(box_x, y, bc[1], bc[2], bc[3])
+        renderer.drawPixel(box_x + box_width - 1, y, bc[1], bc[2], bc[3])
+    end
 
-    -- Draw title
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf(title, box_x, menu_y, box_width, "center")
+    -- Draw title centered
+    local title_x = math.floor(box_x + (box_width - #title * 5) / 2)
+    renderer.drawText(title_x, menu_y, title, 255, 255, 255, 1, true)
     menu_y = menu_y + 18
 
     -- Draw options
     for i, option in ipairs(menu.options) do
-        local color_index
+        local c
         if option.locked then
-            color_index = 5  -- Grey for locked
+            c = Palette.colors[5] or {128, 128, 128}  -- Grey for locked
         elseif i == menu.selected_option then
-            color_index = 11  -- Cyan for selected
+            c = Palette.colors[11] or {0, 255, 255}   -- Cyan for selected
         else
-            color_index = 6  -- Light grey for unselected
+            c = Palette.colors[6] or {200, 200, 200}  -- Light grey for unselected
         end
 
         local prefix = (i == menu.selected_option) and "> " or "  "
-        local r, g, b = getPaletteColor(color_index)
-        love.graphics.setColor(r, g, b)
-        love.graphics.print(prefix .. option.text, box_x + 10, menu_y + (i - 1) * 12)
+        renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
     end
 end
 
--- Draw mode selection screen
+-- Draw mode selection screen (uses software renderer pixel font)
 function menu.draw_mode_select()
     -- Use render resolution as source of truth (480x270)
     local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
 
-    love.graphics.setFont(love.graphics.newFont(8))
-
-    local menu_x = w / 2
     local menu_y = 50
 
     local modes = {
-        {name = "ARCADE", desc = "Assisted flight with auto-balance\nand multi-thruster controls"},
-        {name = "SIMULATION", desc = "Manual flight with one button\nper thruster - no assists"}
+        {name = "ARCADE", desc = {"Assisted flight with auto-balance", "and multi-thruster controls"}},
+        {name = "SIMULATION", desc = {"Manual flight with one button", "per thruster - no assists"}}
     }
 
-    -- Draw title
+    -- Draw title centered
     local title = "SELECT MODE"
-    love.graphics.setColor(1, 1, 1)
-    love.graphics.printf(title, 0, menu_y, w, "center")
+    local title_x = math.floor((w - #title * 5) / 2)
+    renderer.drawText(title_x, menu_y, title, 255, 255, 255, 1, true)
     menu_y = menu_y + 24
 
     -- Draw mode options
     for i, mode in ipairs(modes) do
-        local color_index = (i == menu.selected_mode) and 11 or 6
+        local c
+        if i == menu.selected_mode then
+            c = Palette.colors[11] or {0, 255, 255}  -- Cyan for selected
+        else
+            c = Palette.colors[6] or {200, 200, 200}  -- Light grey
+        end
         local prefix = (i == menu.selected_mode) and "> " or "  "
-
-        local r, g, b = getPaletteColor(color_index)
-        love.graphics.setColor(r, g, b)
-        love.graphics.print(prefix .. mode.name, w / 2 - 60, menu_y)
+        renderer.drawText(w / 2 - 60, menu_y, prefix .. mode.name, c[1], c[2], c[3], 1, true)
         menu_y = menu_y + 14
     end
 
@@ -972,19 +976,40 @@ function menu.draw_mode_select()
     menu_y = menu_y + 10
     local selected_mode = modes[menu.selected_mode]
     if selected_mode then
-        local r, g, b = getPaletteColor(6)
-        love.graphics.setColor(r, g, b)
-        for line in selected_mode.desc:gmatch("[^\n]+") do
-            love.graphics.print("  " .. line, w / 2 - 60, menu_y)
+        local c = Palette.colors[6] or {200, 200, 200}
+        for _, line in ipairs(selected_mode.desc) do
+            renderer.drawText(w / 2 - 60, menu_y, "  " .. line, c[1], c[2], c[3], 1, true)
             menu_y = menu_y + 10
         end
     end
 
     -- Controls hint
     menu_y = h - 40
-    local r, g, b = getPaletteColor(6)
-    love.graphics.setColor(r, g, b)
-    love.graphics.print("[TAB] Back", w / 2 - 60, menu_y)
+    local c = Palette.colors[6] or {200, 200, 200}
+    renderer.drawText(w / 2 - 60, menu_y, "[TAB] Back", c[1], c[2], c[3], 1, true)
+end
+
+-- Unload menu resources
+function menu.unload()
+    -- Release Love2D Image objects to free GPU memory
+    -- NOTE: Don't release logoImage - it's owned by Constants texture cache
+    if softwareImage then
+        softwareImage:release()
+        softwareImage = nil
+    end
+    if blackTransparentShader then
+        blackTransparentShader:release()
+        blackTransparentShader = nil
+    end
+
+    -- Clear mesh data
+    menu.ship_mesh = nil
+    menu.flame_mesh = nil
+    menu.planet = {}
+    menu.clouds = {}
+    menu.space_lines = {}
+
+    print("Menu unloaded")
 end
 
 return menu

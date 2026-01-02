@@ -3,7 +3,6 @@
 
 local config = require("config")
 local ffi = require("ffi")
-local mat4 = require("mat4")
 local renderer_dda = {}
 
 -- Performance counters
@@ -29,6 +28,9 @@ local texturePtr = nil
 local texWidth = 0
 local texHeight = 0
 
+-- Texture pointer cache to avoid repeated ffi.cast calls (JIT killer)
+local texturePtrCache = setmetatable({}, {__mode = "k"})  -- Weak keys for GC
+
 -- Cached matrices for drawTriangle3D
 local currentMVP = nil
 local currentCamera = nil
@@ -42,11 +44,6 @@ local fogColor = {0, 0, 0}  -- RGB 0-255 (unused, kept for compatibility)
 -- Clear/background color - fog dithers to this color
 local clearColor = {162, 136, 121}  -- #a28879 - matches framebuffer clear
 
--- Dither pattern (16-bit like Picotron's fillp)
--- Pattern is a 4x4 bitmask where 1 = draw pixel, 0 = skip pixel
--- Default: 0xFFFF = all pixels drawn (no dithering)
-local ditherPattern = 0xFFFF
-
 -- Bayer 4x4 dithering matrix for fog transitions
 local bayerMatrix = {
     { 0,  8,  2, 10},
@@ -55,7 +52,16 @@ local bayerMatrix = {
     {15,  7, 13,  5}
 }
 
+-- Track if renderer has been initialized
+local isInitialized = false
+
 function renderer_dda.init(width, height)
+    -- Prevent double initialization (causes JIT issues)
+    if isInitialized then
+        print("DDA Renderer already initialized, skipping")
+        return
+    end
+
     RENDER_WIDTH = width
     RENDER_HEIGHT = height
 
@@ -71,6 +77,7 @@ function renderer_dda.init(width, height)
         zbufferPtr[i] = math.huge
     end
 
+    isInitialized = true
     print("DDA Renderer initialized (FFI): " .. RENDER_WIDTH .. "x" .. RENDER_HEIGHT)
 end
 
@@ -99,30 +106,6 @@ function renderer_dda.clearBuffers()
     end
 end
 
--- Clear buffers to black (optimized for menu scene)
-function renderer_dda.clearBuffersBlack()
-    -- Auto-initialize if not initialized
-    if not zbufferPtr then
-        renderer_dda.init(RENDER_WIDTH, RENDER_HEIGHT)
-    end
-
-    -- Reset stats
-    stats.trianglesDrawn = 0
-    stats.pixelsDrawn = 0
-    stats.trianglesCulled = 0
-    stats.trianglesClipped = 0
-
-    -- Clear z-buffer using FFI (optimized with ffi.fill)
-    ffi.fill(zbufferPtr, RENDER_WIDTH * RENDER_HEIGHT * ffi.sizeof("float"), 0x7F)  -- Max float pattern
-
-    -- Clear framebuffer to black (RGBA format) - use ffi.fill for speed
-    ffi.fill(framebufferPtr, RENDER_WIDTH * RENDER_HEIGHT * 4, 0)
-    -- Set alpha to 255 for all pixels
-    for i = 0, RENDER_WIDTH * RENDER_HEIGHT - 1 do
-        framebufferPtr[i * 4 + 3] = 255
-    end
-end
-
 function renderer_dda.getStats()
     return stats
 end
@@ -146,46 +129,6 @@ function renderer_dda.setClearColor(r, g, b)
     clearColor[1] = r or 162
     clearColor[2] = g or 136
     clearColor[3] = b or 121
-end
-
--- Pre-computed 4x4 dither lookup table (generated from pattern)
--- Each entry is true/false for whether to draw that pixel
-local ditherLookup = {}
-for i = 0, 15 do ditherLookup[i] = true end  -- Default: all pixels drawn
-
--- Update dither lookup table from pattern
-local function updateDitherLookup()
-    for i = 0, 15 do
-        -- Extract bit i from pattern (bit 0 = top-left, bit 15 = bottom-right)
-        local bitValue = math.floor(ditherPattern / (2^i)) % 2
-        ditherLookup[i] = bitValue == 1
-    end
-end
-
--- Check if pixel should be drawn based on dither pattern
--- x, y are screen coordinates
-local function shouldDrawPixel(x, y)
-    if ditherPattern == 0xFFFF then
-        return true  -- Fast path: no dithering
-    end
-    -- 4x4 pattern: index = (y % 4) * 4 + (x % 4)
-    local index = (y % 4) * 4 + (x % 4)
-    return ditherLookup[index]
-end
-
--- Set dither pattern (like Picotron's fillp)
--- pattern: 16-bit integer where bits control 4x4 pixel pattern
--- 0xFFFF = no dithering (all pixels drawn)
--- 0x5A5A = 50% checkerboard (0b0101101001011010)
-function renderer_dda.setDitherPattern(pattern)
-    ditherPattern = pattern or 0xFFFF
-    updateDitherLookup()
-end
-
--- Reset dither pattern to solid (no dithering)
-function renderer_dda.resetDitherPattern()
-    ditherPattern = 0xFFFF
-    -- No need to update lookup - fast path bypasses it
 end
 
 -- Calculate fog factor from distance (for per-triangle fog)
@@ -255,8 +198,12 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
         texWidth = texData:getWidth()
         texHeight = texData:getHeight()
 
-        -- Get FFI pointer to texture data for fast sampling
-        texturePtr = ffi.cast("uint8_t*", texData:getFFIPointer())
+        -- Get FFI pointer from cache or create new one (avoid repeated ffi.cast - JIT killer)
+        texturePtr = texturePtrCache[texData]
+        if not texturePtr then
+            texturePtr = ffi.cast("uint8_t*", texData:getFFIPointer())
+            texturePtrCache[texData] = texturePtr
+        end
     elseif texture then
         -- Only Image provided, try to get its data
         texWidth = texture:getWidth()
@@ -266,7 +213,12 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
         if not texData then
             error("renderer_dda.drawTriangle requires ImageData - pass it as 4th parameter")
         end
-        texturePtr = ffi.cast("uint8_t*", texData:getFFIPointer())
+        -- Get FFI pointer from cache or create new one
+        texturePtr = texturePtrCache[texData]
+        if not texturePtr then
+            texturePtr = ffi.cast("uint8_t*", texData:getFFIPointer())
+            texturePtrCache[texData] = texturePtr
+        end
     else
         error("No texture provided to drawTriangle")
     end
@@ -458,8 +410,7 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
 
                 -- Early-Z rejection: test depth before expensive perspective divide
                 if tex_z < zbufferPtr[index] then
-                    -- Note: z-buffer write is deferred until after transparency check
-                    local shouldWriteZ = true
+                    zbufferPtr[index] = tex_z
 
                     -- Perspective-correct calculation every Nth pixel
                     local u, v
@@ -528,11 +479,8 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
                     local g = texturePtr[texIndex + 1]
                     local b = texturePtr[texIndex + 2]
 
-                    -- Treat black/near-black pixels as transparent (skip rendering)
-                    -- Using threshold of 10 to catch near-black pixels in textures
-                    -- Don't write to z-buffer for transparent pixels so objects behind show through
-                    if r < 10 and g < 10 and b < 10 then
-                        shouldWriteZ = false
+                    -- Treat black pixels as transparent (skip rendering)
+                    if r == 0 and g == 0 and b == 0 then
                         goto continue_pixel
                     end
 
@@ -586,17 +534,7 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
                         end
                     end
 
-                    -- Check dither pattern before drawing
-                    if not shouldDrawPixel(col, row) then
-                        goto continue_pixel
-                    end
-
                     -- Write to framebuffer
-                    -- Write to z-buffer only for non-transparent pixels
-                    if shouldWriteZ then
-                        zbufferPtr[index] = tex_z
-                    end
-
                     local pixelIndex = index * 4
                     framebufferPtr[pixelIndex] = r
                     framebufferPtr[pixelIndex + 1] = g
@@ -638,6 +576,11 @@ end
 
 function renderer_dda.getImageData()
     return softwareImageData
+end
+
+-- Clear texture pointer cache (call when switching scenes to avoid stale pointers)
+function renderer_dda.clearTextureCache()
+    texturePtrCache = setmetatable({}, {__mode = "k"})
 end
 
 -- Set matrices for 3D rendering
@@ -776,6 +719,8 @@ function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData, brightness, f
         error("Must call renderer_dda.setMatrices() before drawTriangle3D()")
     end
 
+    local mat4 = require("mat4")
+
     -- Early backface culling in world space (DISABLED - causes issues)
     -- TODO: Fix world-space backface culling math
     -- local edge1x = v2.pos[1] - v1.pos[1]
@@ -880,12 +825,13 @@ end
 -- Draw a 3D line in world space with depth testing
 -- p0, p1 are {x, y, z} world positions
 -- r, g, b are 0-255
--- skipZBuffer: if true, draws without z-testing (for background elements)
 -- Uses the current MVP matrix set by setMatrices()
-function renderer_dda.drawLine3D(p0, p1, r, g, b, skipZBuffer)
+function renderer_dda.drawLine3D(p0, p1, r, g, b)
     if not currentMVP then
         error("Must call renderer_dda.setMatrices() before drawLine3D()")
     end
+
+    local mat4 = require("mat4")
 
     -- Transform to clip space
     local c0 = mat4.multiplyVec4(currentMVP, {p0[1], p0[2], p0[3], 1})
@@ -946,31 +892,19 @@ function renderer_dda.drawLine3D(p0, p1, r, g, b, skipZBuffer)
     local stepCount = 0
 
     while true do
-        -- Draw pixel if in bounds
+        -- Draw pixel if in bounds and passes depth test
         if x0 >= 0 and x0 < RENDER_WIDTH and y0 >= 0 and y0 < RENDER_HEIGHT then
             local index = y0 * RENDER_WIDTH + x0
 
-            if skipZBuffer then
-                -- Skip z-buffer: draw only if nothing else has been drawn here yet
-                -- (z-buffer still at max value means this pixel is clear)
-                if zbufferPtr[index] >= 1e30 then
-                    local pixelIndex = index * 4
-                    framebufferPtr[pixelIndex] = r
-                    framebufferPtr[pixelIndex + 1] = g
-                    framebufferPtr[pixelIndex + 2] = b
-                    framebufferPtr[pixelIndex + 3] = 255
-                end
-            else
-                -- Normal depth test
-                if currentZ < zbufferPtr[index] then
-                    zbufferPtr[index] = currentZ
+            -- Depth test
+            if currentZ < zbufferPtr[index] then
+                zbufferPtr[index] = currentZ
 
-                    local pixelIndex = index * 4
-                    framebufferPtr[pixelIndex] = r
-                    framebufferPtr[pixelIndex + 1] = g
-                    framebufferPtr[pixelIndex + 2] = b
-                    framebufferPtr[pixelIndex + 3] = 255
-                end
+                local pixelIndex = index * 4
+                framebufferPtr[pixelIndex] = r
+                framebufferPtr[pixelIndex + 1] = g
+                framebufferPtr[pixelIndex + 2] = b
+                framebufferPtr[pixelIndex + 3] = 255
             end
         end
 

@@ -7,8 +7,8 @@ local Constants = require("constants")
 local Skydome = {}
 
 -- Configuration (more polygons than Picotron's 6 sides)
-local SKYBOX_RADIUS = 50
-local SKYBOX_HEIGHT = 30
+local SKYBOX_RADIUS = 100
+local SKYBOX_HEIGHT = 60
 local NUM_SIDES = 16  -- Smoother dome (Picotron used 6, Mission 6 used 16)
 
 -- Pre-computed vertices and faces

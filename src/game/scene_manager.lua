@@ -1,5 +1,7 @@
 -- Simple Scene Manager
 local scene_manager = {}
+local renderer = require("renderer_dda")
+local jit = require("jit")
 
 local currentScene = nil
 local scenes = {}
@@ -14,6 +16,21 @@ function scene_manager.switch(name)
     if not scenes[name] then
         error("Scene '" .. name .. "' not found")
     end
+
+    -- Call the old scene's unload function if it exists
+    if currentScene and currentScene.unload then
+        currentScene.unload()
+    end
+
+    -- Clear renderer texture cache to avoid stale FFI pointers
+    renderer.clearTextureCache()
+
+    -- Flush JIT traces to prevent cross-scene trace pollution
+    jit.flush()
+
+    -- Force garbage collection to release old scene resources
+    collectgarbage("collect")
+    collectgarbage("collect")
 
     currentScene = scenes[name]
 

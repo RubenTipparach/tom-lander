@@ -47,8 +47,7 @@ local cargo_items = {}
 local thrusterFont = nil
 
 function flight_scene.load()
-    -- Initialize renderer
-    renderer.init(config.RENDER_WIDTH, config.RENDER_HEIGHT)
+    -- Renderer already initialized in main.lua
     softwareImage = love.graphics.newImage(renderer.getImageData())
     softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
 
@@ -176,7 +175,6 @@ function flight_scene.load()
 
     -- Reset renderer state (menu may have changed these)
     renderer.setClearColor(162, 136, 121)
-    --renderer.resetDitherPattern()
 
     print("Flight scene loaded")
     print("Controls:")
@@ -371,7 +369,7 @@ function flight_scene.update(dt)
 end
 
 function flight_scene.draw()
-    -- Clear buffers
+    -- Set clear color and clear buffers
     renderer.clearBuffers()
 
     -- Build view-projection matrix with cam_dist offset (like Picotron)
@@ -514,6 +512,10 @@ function flight_scene.keypressed(key)
     if key == "escape" then
         local scene_manager = require("scene_manager")
         scene_manager.switch("menu")
+    elseif key == "q" then
+        -- Toggle SET_CLEAR_COLOR for testing
+        config.SET_CLEAR_COLOR = not config.SET_CLEAR_COLOR
+        print("SET_CLEAR_COLOR: " .. tostring(config.SET_CLEAR_COLOR))
     elseif key == "r" then
         -- Reset ship to first landing pad
         local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
