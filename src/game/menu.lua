@@ -498,9 +498,9 @@ function menu.select_option()
         menu.show_options = false
         menu.selected_mode = 1
     elseif option.action == "story" then
-        -- Start story/mission 0 - go directly to flight for now
+        -- Start story cutscene
         menu.active = false
-        scene_manager.switch("flight")
+        scene_manager.switch("cutscene")
     elseif option.action == "quit" then
         love.event.quit()
     end

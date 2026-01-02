@@ -13,6 +13,7 @@ local logInterval = 5  -- Log every 5 seconds
 scene_manager.register("menu", require("menu"))
 scene_manager.register("flight", require("flight_scene"))
 scene_manager.register("ship_viewer", require("ship_viewer"))
+scene_manager.register("cutscene", require("cutscene_scene"))
 
 function love.load()
     -- Initialize renderer ONCE at startup (calling init twice causes JIT issues)
