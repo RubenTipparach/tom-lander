@@ -663,18 +663,17 @@ function menu.draw()
             menu.draw_sphere(menu.planet, PLANET_PITCH, PLANET_YAW + menu.planet.rotation, PLANET_ROLL, planetTexData)
         end
 
-        -- Draw clouds on top (larger sphere, black pixels transparent)
-        -- Dithering disabled for old renderer compatibility
+        -- Draw clouds on top (larger sphere, with 50% dithering for transparency)
         local cloudTexData = Constants.getTextureData(Constants.SPRITE_CLOUDS)
         if cloudTexData then
-            menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData)
+            menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData, 0.5)
         end
 
         -- Draw ship with thrusters
         menu.draw_ship()
 
-        -- Draw space lines LAST, as background (skipZBuffer = true)
-        -- They only draw where nothing else has been drawn (clear pixels)
+        -- Draw space lines LAST with skipZBuffer=true
+        -- They draw only where z-buffer is untouched (behind all geometry)
         local dir_x, dir_y, dir_z = get_starfield_direction()
 
         for _, space_line in ipairs(menu.space_lines) do
@@ -689,7 +688,7 @@ function menu.draw()
             local z2 = z1 + dir_z * space_line.length
 
             local c = Palette.colors[space_line.color] or Palette.colors[7]
-            renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3])
+            renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3], true)  -- skipZBuffer=true
         end
 
         -- Draw UI text to software framebuffer BEFORE replacePixels
@@ -736,7 +735,8 @@ function menu.draw()
 end
 
 -- Draw sphere mesh
-function menu.draw_sphere(sphere, pitch, yaw, roll, texData)
+-- brightness: optional dithering value (0-1), nil = no dithering
+function menu.draw_sphere(sphere, pitch, yaw, roll, texData, brightness)
     -- Build model matrix for the sphere (convert Picotron 0-1 rotations to radians)
     -- For self-rotation: M = T * R (rotate around center, then translate to world position)
     -- In our multiply order: we build right-to-left, so rotation first then translation
@@ -768,7 +768,8 @@ function menu.draw_sphere(sphere, pitch, yaw, roll, texData)
                 {pos = {p3[1], p3[2], p3[3]}, uv = {uv3.x / 64, uv3.y / 32}},
                 {pos = {p2[1], p2[2], p2[3]}, uv = {uv2.x / 64, uv2.y / 32}},
                 nil,
-                texData
+                texData,
+                brightness
             )
         end
     end
@@ -823,8 +824,6 @@ function menu.draw_ship()
         -- Engine positions relative to ship (in ship local space)
         local engine_positions = {ENGINE_RIGHT, ENGINE_LEFT, ENGINE_FRONT, ENGINE_BACK}
 
-        -- Dithering disabled for old renderer compatibility
-
         for engine_idx, engine in ipairs(engine_positions) do
             -- Flickering scale
             local base_flicker = math.sin(flame_time + engine_idx * 2.5) * FLAME_FLICKER_AMOUNT
@@ -849,12 +848,14 @@ function menu.draw_ship()
                 local p2 = mat4.multiplyVec4(flameMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
                 local p3 = mat4.multiplyVec4(flameMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
+                -- 50% dithering for flame transparency effect
                 renderer.drawTriangle3D(
                     {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
                     {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
                     {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
                     nil,
-                    flameTexData
+                    flameTexData,
+                    0.5  -- 50% dithering
                 )
             end
         end

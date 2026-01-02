@@ -486,18 +486,16 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
 
                     -- Apply brightness modulation with dithering if provided
                     if brightness then
-                        -- Bayer dithering for lighting
+                        -- Bayer dithering for transparency
                         local bayerX = (col % 4) + 1
                         local bayerY = (row % 4) + 1
                         local threshold = bayerMatrix[bayerY][bayerX] / 16.0
 
-                        -- If brightness is below threshold, darken the pixel to black
+                        -- If brightness is below threshold, skip pixel entirely for transparency
                         if brightness < threshold then
-                            r = 0
-                            g = 0
-                            b = 0
+                            goto continue_pixel
                         end
-                        -- Otherwise keep full brightness (texture color as-is)
+                        -- Otherwise draw at full brightness (texture color as-is)
                     end
 
                     -- Apply fog with dithering if enabled
@@ -825,8 +823,9 @@ end
 -- Draw a 3D line in world space with depth testing
 -- p0, p1 are {x, y, z} world positions
 -- r, g, b are 0-255
+-- skipZBuffer: if true, draws behind everything (for starfield background)
 -- Uses the current MVP matrix set by setMatrices()
-function renderer_dda.drawLine3D(p0, p1, r, g, b)
+function renderer_dda.drawLine3D(p0, p1, r, g, b, skipZBuffer)
     if not currentMVP then
         error("Must call renderer_dda.setMatrices() before drawLine3D()")
     end
@@ -896,15 +895,27 @@ function renderer_dda.drawLine3D(p0, p1, r, g, b)
         if x0 >= 0 and x0 < RENDER_WIDTH and y0 >= 0 and y0 < RENDER_HEIGHT then
             local index = y0 * RENDER_WIDTH + x0
 
-            -- Depth test
-            if currentZ < zbufferPtr[index] then
-                zbufferPtr[index] = currentZ
+            if skipZBuffer then
+                -- Draw only where z-buffer is at max (nothing rendered yet)
+                -- This makes lines appear behind everything
+                if zbufferPtr[index] >= 1.0 then
+                    local pixelIndex = index * 4
+                    framebufferPtr[pixelIndex] = r
+                    framebufferPtr[pixelIndex + 1] = g
+                    framebufferPtr[pixelIndex + 2] = b
+                    framebufferPtr[pixelIndex + 3] = 255
+                end
+            else
+                -- Normal depth test
+                if currentZ < zbufferPtr[index] then
+                    zbufferPtr[index] = currentZ
 
-                local pixelIndex = index * 4
-                framebufferPtr[pixelIndex] = r
-                framebufferPtr[pixelIndex + 1] = g
-                framebufferPtr[pixelIndex + 2] = b
-                framebufferPtr[pixelIndex + 3] = 255
+                    local pixelIndex = index * 4
+                    framebufferPtr[pixelIndex] = r
+                    framebufferPtr[pixelIndex + 1] = g
+                    framebufferPtr[pixelIndex + 2] = b
+                    framebufferPtr[pixelIndex + 3] = 255
+                end
             end
         end
 

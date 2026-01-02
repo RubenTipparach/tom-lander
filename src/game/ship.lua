@@ -404,12 +404,14 @@ function Ship:draw_flames(renderer, shipModelMatrix)
                 local p2 = mat4.multiplyVec4(flameMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
                 local p3 = mat4.multiplyVec4(flameMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
+                -- 50% dithering for flame transparency effect
                 renderer.drawTriangle3D(
                     {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
                     {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
                     {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
                     nil,
-                    flameTexData
+                    flameTexData,
+                    0.5  -- 50% dithering
                 )
             end
         end
