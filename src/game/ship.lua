@@ -45,7 +45,7 @@ function Ship.new(config)
     -- Health and damage
     self.max_health = config.max_health or 100
     self.health = self.max_health
-    self.is_damaged = false
+    self.damage_blink_timer = 0  -- Timer for damage blink effect
 
     -- Mesh data
     self.mesh = nil
@@ -80,7 +80,7 @@ end
 -- Load ship mesh from OBJ file
 function Ship:load_mesh()
     local success, result = pcall(function()
-        return obj_loader.load("assets/ship_low_poly.obj")
+        return obj_loader.load("assets/cross_lander.obj")
     end)
 
     if success and result then
@@ -173,7 +173,7 @@ function Ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
     self.local_vroll = 0
 
     self.health = self.max_health
-    self.is_damaged = false
+    self.damage_blink_timer = 0
 end
 
 -- Update thruster states from keyboard (called from flight_scene)
@@ -221,6 +221,9 @@ end
 function Ship:update(dt)
     -- Update thruster states
     self:update_thrusters()
+
+    -- Update damage blink timer
+    self:update_damage_blink(dt)
 
     -- Apply gravity (like Picotron: vtol.vy += vtol.gravity)
     self.vy = self.vy + self.gravity
@@ -319,9 +322,9 @@ function Ship:draw(renderer, texData)
     local modelMatrix = mat4.multiply(rotationMatrix, scaleMatrix)
     modelMatrix = mat4.multiply(mat4.translation(self.x, self.y, self.z), modelMatrix)
 
-    -- Get ship texture
+    -- Get ship texture (blink red when damage_blink_timer > 0)
     local shipTexData = texData or Constants.getTextureData(Constants.SPRITE_SHIP)
-    if self.is_damaged then
+    if self.damage_blink_timer > 0 then
         shipTexData = Constants.getTextureData(Constants.SPRITE_SHIP_DAMAGE) or shipTexData
     end
 
@@ -413,14 +416,14 @@ function Ship:draw_flames(renderer, shipModelMatrix)
     end
 end
 
--- Take damage
+-- Take damage (triggers temporary blink effect)
 function Ship:take_damage(amount)
     self.health = self.health - amount
     if self.health < 0 then
         self.health = 0
     end
-    -- Update damaged state based on current health
-    self.is_damaged = self.health < 50
+    -- Start damage blink timer (0.15 seconds)
+    self.damage_blink_timer = 0.15
 end
 
 -- Heal the ship
@@ -429,8 +432,16 @@ function Ship:heal(amount)
     if self.health > self.max_health then
         self.health = self.max_health
     end
-    -- Update damaged state based on current health
-    self.is_damaged = self.health < 50
+end
+
+-- Update damage blink timer (call this from update)
+function Ship:update_damage_blink(dt)
+    if self.damage_blink_timer > 0 then
+        self.damage_blink_timer = self.damage_blink_timer - dt
+        if self.damage_blink_timer < 0 then
+            self.damage_blink_timer = 0
+        end
+    end
 end
 
 -- Get position as vec3
