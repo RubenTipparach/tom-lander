@@ -1169,6 +1169,114 @@ function renderer_dda.drawPixel(x, y, r, g, b)
     end
 end
 
+-- Draw a filled rectangle
+function renderer_dda.drawRectFill(x1, y1, x2, y2, r, g, b, alpha)
+    x1 = math.floor(x1)
+    y1 = math.floor(y1)
+    x2 = math.floor(x2)
+    y2 = math.floor(y2)
+
+    -- Clamp to screen bounds
+    if x1 < 0 then x1 = 0 end
+    if y1 < 0 then y1 = 0 end
+    if x2 >= RENDER_WIDTH then x2 = RENDER_WIDTH - 1 end
+    if y2 >= RENDER_HEIGHT then y2 = RENDER_HEIGHT - 1 end
+
+    if x1 > x2 or y1 > y2 then return end
+
+    -- Alpha blending support (0-255)
+    alpha = alpha or 255
+    local useBlend = alpha < 255
+    local invAlpha = 255 - alpha
+
+    for y = y1, y2 do
+        local rowBase = y * RENDER_WIDTH * 4
+        for x = x1, x2 do
+            local pixelIndex = rowBase + x * 4
+            if useBlend then
+                -- Alpha blend with existing pixel
+                local oldR = framebufferPtr[pixelIndex]
+                local oldG = framebufferPtr[pixelIndex + 1]
+                local oldB = framebufferPtr[pixelIndex + 2]
+                framebufferPtr[pixelIndex] = math.floor((r * alpha + oldR * invAlpha) / 255)
+                framebufferPtr[pixelIndex + 1] = math.floor((g * alpha + oldG * invAlpha) / 255)
+                framebufferPtr[pixelIndex + 2] = math.floor((b * alpha + oldB * invAlpha) / 255)
+            else
+                framebufferPtr[pixelIndex] = r
+                framebufferPtr[pixelIndex + 1] = g
+                framebufferPtr[pixelIndex + 2] = b
+            end
+            framebufferPtr[pixelIndex + 3] = 255
+        end
+    end
+end
+
+-- Draw a rectangle outline
+function renderer_dda.drawRect(x1, y1, x2, y2, r, g, b)
+    x1 = math.floor(x1)
+    y1 = math.floor(y1)
+    x2 = math.floor(x2)
+    y2 = math.floor(y2)
+
+    -- Draw top and bottom edges
+    for x = x1, x2 do
+        renderer_dda.drawPixel(x, y1, r, g, b)
+        renderer_dda.drawPixel(x, y2, r, g, b)
+    end
+    -- Draw left and right edges
+    for y = y1, y2 do
+        renderer_dda.drawPixel(x1, y, r, g, b)
+        renderer_dda.drawPixel(x2, y, r, g, b)
+    end
+end
+
+-- Draw a filled circle
+function renderer_dda.drawCircleFill(cx, cy, radius, r, g, b)
+    cx = math.floor(cx)
+    cy = math.floor(cy)
+    radius = math.floor(radius)
+
+    for y = -radius, radius do
+        for x = -radius, radius do
+            if x*x + y*y <= radius*radius then
+                renderer_dda.drawPixel(cx + x, cy + y, r, g, b)
+            end
+        end
+    end
+end
+
+-- Draw a circle outline
+function renderer_dda.drawCircle(cx, cy, radius, r, g, b)
+    cx = math.floor(cx)
+    cy = math.floor(cy)
+    radius = math.floor(radius)
+
+    -- Midpoint circle algorithm
+    local x = radius
+    local y = 0
+    local err = 0
+
+    while x >= y do
+        renderer_dda.drawPixel(cx + x, cy + y, r, g, b)
+        renderer_dda.drawPixel(cx + y, cy + x, r, g, b)
+        renderer_dda.drawPixel(cx - y, cy + x, r, g, b)
+        renderer_dda.drawPixel(cx - x, cy + y, r, g, b)
+        renderer_dda.drawPixel(cx - x, cy - y, r, g, b)
+        renderer_dda.drawPixel(cx - y, cy - x, r, g, b)
+        renderer_dda.drawPixel(cx + y, cy - x, r, g, b)
+        renderer_dda.drawPixel(cx + x, cy - y, r, g, b)
+
+        y = y + 1
+        if err <= 0 then
+            err = err + 2*y + 1
+        end
+        if err > 0 then
+            x = x - 1
+            err = err - 2*x + 1
+        end
+    end
+end
+
 -- Draw a single pixel (helper for text)
 local function drawPixelDirect(x, y, r, g, b)
     if x >= 0 and x < RENDER_WIDTH and y >= 0 and y < RENDER_HEIGHT then

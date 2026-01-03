@@ -68,10 +68,13 @@ local MENU_RENDER_DISTANCE = 2000
 menu.active = true
 menu.show_options = false
 menu.show_mode_select = false
+menu.show_campaign = false  -- Campaign submenu
 menu.selected_option = 1
 menu.selected_mode = 1  -- 1 = Arcade, 2 = Simulation
 menu.pending_mission = nil
 menu.options = {}
+menu.campaign_options = {}  -- Campaign mission list
+menu.selected_campaign = 1
 menu.mission_progress = {}
 menu.splash_fade = 0
 
@@ -283,67 +286,82 @@ function menu.add_space_line()
     })
 end
 
--- Update menu options based on unlocked missions
+-- Update menu options (main menu)
 function menu.update_options()
     menu.options = {}
 
-    -- Mission 0: Story (always unlocked)
-    table.insert(menu.options, {text = "MISSION 0: TOM LANDER", action = "story", locked = false})
-
-    -- Mission 1 (unlocked)
-    if menu.mission_progress.mission_1 then
-        table.insert(menu.options, {text = "MISSION 1: ENGINE TEST", mission = 1, locked = false})
-    else
-        table.insert(menu.options, {text = "MISSION 1: [LOCKED]", mission = 1, locked = true})
-    end
-
-    -- Mission 2 (locked per user request)
-    if menu.mission_progress.mission_2 then
-        table.insert(menu.options, {text = "MISSION 2: CARGO DELIVERY", mission = 2, locked = false})
-    else
-        table.insert(menu.options, {text = "MISSION 2: [LOCKED]", mission = 2, locked = true})
-    end
-
-    -- Mission 3 (locked per user request)
-    if menu.mission_progress.mission_3 then
-        table.insert(menu.options, {text = "MISSION 3: SCIENTIFIC MISSION", mission = 3, locked = false})
-    else
-        table.insert(menu.options, {text = "MISSION 3: [LOCKED]", mission = 3, locked = true})
-    end
-
-    -- Mission 4 (locked per user request)
-    if menu.mission_progress.mission_4 then
-        table.insert(menu.options, {text = "MISSION 4: OCEAN RESCUE", mission = 4, locked = false})
-    else
-        table.insert(menu.options, {text = "MISSION 4: [LOCKED]", mission = 4, locked = true})
-    end
-
-    -- Mission 5 (locked per user request)
-    if menu.mission_progress.mission_5 then
-        table.insert(menu.options, {text = "MISSION 5: SECRET WEAPON", mission = 5, locked = false})
-    else
-        table.insert(menu.options, {text = "MISSION 5: [LOCKED]", mission = 5, locked = true})
-    end
-
-    -- Mission 6 (locked per user request)
-    if menu.mission_progress.mission_6 then
-        table.insert(menu.options, {text = "MISSION 6: ALIEN INVASION", mission = 6, locked = false})
-    else
-        table.insert(menu.options, {text = "MISSION 6: [LOCKED]", mission = 6, locked = true})
-    end
-
+    -- Main menu options
+    table.insert(menu.options, {text = "FREE FLIGHT", action = "free_flight", locked = false})
+    table.insert(menu.options, {text = "CAMPAIGN", action = "campaign", locked = false})
     table.insert(menu.options, {text = "QUIT", action = "quit", locked = false})
 
     -- Clamp selected option
     if menu.selected_option > #menu.options then
         menu.selected_option = #menu.options
     end
+end
+
+-- Update campaign options (mission list)
+function menu.update_campaign_options()
+    menu.campaign_options = {}
+
+    -- Mission 0: Story (always unlocked)
+    table.insert(menu.campaign_options, {text = "MISSION 0: TOM LANDER", action = "story", locked = false})
+
+    -- Mission 1 (unlocked)
+    if menu.mission_progress.mission_1 then
+        table.insert(menu.campaign_options, {text = "MISSION 1: ENGINE TEST", mission = 1, locked = false})
+    else
+        table.insert(menu.campaign_options, {text = "MISSION 1: [LOCKED]", mission = 1, locked = true})
+    end
+
+    -- Mission 2 (locked per user request)
+    if menu.mission_progress.mission_2 then
+        table.insert(menu.campaign_options, {text = "MISSION 2: CARGO DELIVERY", mission = 2, locked = false})
+    else
+        table.insert(menu.campaign_options, {text = "MISSION 2: [LOCKED]", mission = 2, locked = true})
+    end
+
+    -- Mission 3 (locked per user request)
+    if menu.mission_progress.mission_3 then
+        table.insert(menu.campaign_options, {text = "MISSION 3: SCIENTIFIC MISSION", mission = 3, locked = false})
+    else
+        table.insert(menu.campaign_options, {text = "MISSION 3: [LOCKED]", mission = 3, locked = true})
+    end
+
+    -- Mission 4 (locked per user request)
+    if menu.mission_progress.mission_4 then
+        table.insert(menu.campaign_options, {text = "MISSION 4: OCEAN RESCUE", mission = 4, locked = false})
+    else
+        table.insert(menu.campaign_options, {text = "MISSION 4: [LOCKED]", mission = 4, locked = true})
+    end
+
+    -- Mission 5 (locked per user request)
+    if menu.mission_progress.mission_5 then
+        table.insert(menu.campaign_options, {text = "MISSION 5: SECRET WEAPON", mission = 5, locked = false})
+    else
+        table.insert(menu.campaign_options, {text = "MISSION 5: [LOCKED]", mission = 5, locked = true})
+    end
+
+    -- Mission 6 (locked per user request)
+    if menu.mission_progress.mission_6 then
+        table.insert(menu.campaign_options, {text = "MISSION 6: ALIEN INVASION", mission = 6, locked = false})
+    else
+        table.insert(menu.campaign_options, {text = "MISSION 6: [LOCKED]", mission = 6, locked = true})
+    end
+
+    table.insert(menu.campaign_options, {text = "BACK", action = "back", locked = false})
+
+    -- Clamp selected campaign option
+    if menu.selected_campaign > #menu.campaign_options then
+        menu.selected_campaign = #menu.campaign_options
+    end
 
     -- Skip locked options
-    while menu.options[menu.selected_option] and menu.options[menu.selected_option].locked do
-        menu.selected_option = menu.selected_option + 1
-        if menu.selected_option > #menu.options then
-            menu.selected_option = 1
+    while menu.campaign_options[menu.selected_campaign] and menu.campaign_options[menu.selected_campaign].locked do
+        menu.selected_campaign = menu.selected_campaign + 1
+        if menu.selected_campaign > #menu.campaign_options then
+            menu.selected_campaign = 1
         end
     end
 end
@@ -356,7 +374,9 @@ function menu.load()
     menu.active = true
     menu.show_options = false
     menu.show_mode_select = false
+    menu.show_campaign = false
     menu.selected_option = 1
+    menu.selected_campaign = 1
     menu.selected_mode = 1
     menu.pending_mission = nil
 
@@ -371,6 +391,7 @@ function menu.load()
     }
 
     menu.update_options()
+    menu.update_campaign_options()
 
     -- Only initialize 3D rendering if enabled in config
     if config.MENU_3D_ENABLED then
@@ -491,18 +512,47 @@ function menu.select_option()
         return nil
     end
 
+    if option.action == "free_flight" then
+        -- Go directly to free flight mode
+        menu.active = false
+        menu.pending_mission = nil  -- No mission
+        menu.game_mode = "arcade"
+        scene_manager.switch("flight")
+    elseif option.action == "campaign" then
+        -- Show campaign mission list
+        menu.show_campaign = true
+        menu.show_options = false
+        menu.selected_campaign = 1
+        menu.update_campaign_options()
+    elseif option.action == "quit" then
+        love.event.quit()
+    end
+
+    return nil
+end
+
+-- Select campaign mission
+function menu.select_campaign_option()
+    local option = menu.campaign_options[menu.selected_campaign]
+
+    if option.locked then
+        return nil
+    end
+
     if option.mission then
         -- Show mode selection screen
         menu.pending_mission = option.mission
         menu.show_mode_select = true
-        menu.show_options = false
+        menu.show_campaign = false
         menu.selected_mode = 1
     elseif option.action == "story" then
         -- Start story cutscene
         menu.active = false
         scene_manager.switch("cutscene")
-    elseif option.action == "quit" then
-        love.event.quit()
+    elseif option.action == "back" then
+        -- Go back to main menu
+        menu.show_campaign = false
+        menu.show_options = true
     end
 
     return nil
@@ -571,7 +621,7 @@ function menu.keypressed(key)
     if not menu.active then return end
 
     -- Title screen - press to continue
-    if not menu.show_options and not menu.show_mode_select then
+    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign then
         if key == "z" or key == "x" or key == "return" then
             menu.show_options = true
         end
@@ -586,36 +636,57 @@ function menu.keypressed(key)
             menu.select_mode()
         elseif key == "tab" or key == "escape" then
             menu.show_mode_select = false
-            menu.show_options = true
+            menu.show_campaign = true  -- Go back to campaign list
             menu.pending_mission = nil
         end
         return
     end
 
-    -- Mission selection screen
+    -- Campaign mission selection screen
+    if menu.show_campaign then
+        if key == "up" then
+            menu.selected_campaign = menu.selected_campaign - 1
+            if menu.selected_campaign < 1 then
+                menu.selected_campaign = #menu.campaign_options
+            end
+            -- Skip locked options
+            while menu.campaign_options[menu.selected_campaign].locked do
+                menu.selected_campaign = menu.selected_campaign - 1
+                if menu.selected_campaign < 1 then
+                    menu.selected_campaign = #menu.campaign_options
+                end
+            end
+        elseif key == "down" then
+            menu.selected_campaign = menu.selected_campaign + 1
+            if menu.selected_campaign > #menu.campaign_options then
+                menu.selected_campaign = 1
+            end
+            -- Skip locked options
+            while menu.campaign_options[menu.selected_campaign].locked do
+                menu.selected_campaign = menu.selected_campaign + 1
+                if menu.selected_campaign > #menu.campaign_options then
+                    menu.selected_campaign = 1
+                end
+            end
+        elseif key == "z" or key == "x" or key == "return" or key == "space" then
+            menu.select_campaign_option()
+        elseif key == "tab" or key == "escape" then
+            menu.show_campaign = false
+            menu.show_options = true
+        end
+        return
+    end
+
+    -- Main menu screen
     if key == "up" then
         menu.selected_option = menu.selected_option - 1
         if menu.selected_option < 1 then
             menu.selected_option = #menu.options
         end
-        -- Skip locked options
-        while menu.options[menu.selected_option].locked do
-            menu.selected_option = menu.selected_option - 1
-            if menu.selected_option < 1 then
-                menu.selected_option = #menu.options
-            end
-        end
     elseif key == "down" then
         menu.selected_option = menu.selected_option + 1
         if menu.selected_option > #menu.options then
             menu.selected_option = 1
-        end
-        -- Skip locked options
-        while menu.options[menu.selected_option].locked do
-            menu.selected_option = menu.selected_option + 1
-            if menu.selected_option > #menu.options then
-                menu.selected_option = 1
-            end
         end
     elseif key == "z" or key == "x" or key == "return" or key == "space" then
         menu.select_option()
@@ -694,6 +765,8 @@ function menu.draw()
         -- Draw UI text to software framebuffer BEFORE replacePixels
         if menu.show_mode_select then
             menu.draw_mode_select()
+        elseif menu.show_campaign then
+            menu.draw_campaign()
         elseif menu.show_options then
             menu.draw_options()
         else
@@ -707,8 +780,8 @@ function menu.draw()
         love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
     end
 
-    -- Draw logo on top (Love2D image, drawn after software render)
-    if not menu.show_options and not menu.show_mode_select then
+    -- Draw logo on top (Love2D image, drawn after software render) - only on title screen
+    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign then
         -- Title screen - draw logo
         if logoImage then
             love.graphics.push()
@@ -880,12 +953,12 @@ function menu.draw_title()
     renderer.drawText(hint_x, hint_y, hint, c[1], c[2], c[3], 1, true)
 end
 
--- Draw mission options screen (uses software renderer pixel font)
+-- Draw main menu options screen (uses software renderer pixel font)
 function menu.draw_options()
     -- Use render resolution as source of truth (480x270)
     local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
 
-    local menu_y = 40
+    local menu_y = 80
 
     -- Calculate box dimensions
     local box_padding = 10
@@ -904,22 +977,11 @@ function menu.draw_options()
     local box_y = menu_y - box_padding
 
     -- Draw box background using pixel drawing (dark blue-ish)
-    for y = box_y, box_y + box_height - 1 do
-        for x = box_x, box_x + box_width - 1 do
-            renderer.drawPixel(x, y, 25, 38, 77)
-        end
-    end
+    renderer.drawRectFill(box_x, box_y, box_x + box_width, box_y + box_height, 25, 38, 77)
 
     -- Draw border
     local bc = Palette.colors[6] or {200, 200, 200}
-    for x = box_x, box_x + box_width - 1 do
-        renderer.drawPixel(x, box_y, bc[1], bc[2], bc[3])
-        renderer.drawPixel(x, box_y + box_height - 1, bc[1], bc[2], bc[3])
-    end
-    for y = box_y, box_y + box_height - 1 do
-        renderer.drawPixel(box_x, y, bc[1], bc[2], bc[3])
-        renderer.drawPixel(box_x + box_width - 1, y, bc[1], bc[2], bc[3])
-    end
+    renderer.drawRect(box_x, box_y, box_x + box_width, box_y + box_height, bc[1], bc[2], bc[3])
 
     -- Draw title centered
     local title_x = math.floor(box_x + (box_width - #title * 5) / 2)
@@ -929,10 +991,8 @@ function menu.draw_options()
     -- Draw options
     for i, option in ipairs(menu.options) do
         local c
-        if option.locked then
-            c = Palette.colors[5] or {128, 128, 128}  -- Grey for locked
-        elseif i == menu.selected_option then
-            c = Palette.colors[11] or {0, 255, 255}   -- Cyan for selected
+        if i == menu.selected_option then
+            c = Palette.colors[11] or {0, 255, 255}   -- Green for selected
         else
             c = Palette.colors[6] or {200, 200, 200}  -- Light grey for unselected
         end
@@ -940,6 +1000,62 @@ function menu.draw_options()
         local prefix = (i == menu.selected_option) and "> " or "  "
         renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
     end
+end
+
+-- Draw campaign mission list screen (uses software renderer pixel font)
+function menu.draw_campaign()
+    -- Use render resolution as source of truth (480x270)
+    local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
+
+    local menu_y = 30
+
+    -- Calculate box dimensions
+    local box_padding = 10
+    local title = "CAMPAIGN MISSIONS"
+    local title_width = #title * 5
+    local max_option_width = 0
+    for i, option in ipairs(menu.campaign_options) do
+        local option_width = (#option.text + 3) * 5
+        if option_width > max_option_width then
+            max_option_width = option_width
+        end
+    end
+    local box_width = math.max(title_width, max_option_width) + box_padding * 2 + 20
+    local box_height = 20 + #menu.campaign_options * 12 + box_padding * 2
+    local box_x = math.floor((w - box_width) / 2)
+    local box_y = menu_y - box_padding
+
+    -- Draw box background using pixel drawing (dark blue-ish)
+    renderer.drawRectFill(box_x, box_y, box_x + box_width, box_y + box_height, 25, 38, 77)
+
+    -- Draw border
+    local bc = Palette.colors[6] or {200, 200, 200}
+    renderer.drawRect(box_x, box_y, box_x + box_width, box_y + box_height, bc[1], bc[2], bc[3])
+
+    -- Draw title centered
+    local title_x = math.floor(box_x + (box_width - #title * 5) / 2)
+    renderer.drawText(title_x, menu_y, title, 255, 255, 255, 1, true)
+    menu_y = menu_y + 18
+
+    -- Draw options
+    for i, option in ipairs(menu.campaign_options) do
+        local c
+        if option.locked then
+            c = Palette.colors[5] or {128, 128, 128}  -- Grey for locked
+        elseif i == menu.selected_campaign then
+            c = Palette.colors[11] or {0, 255, 255}   -- Green for selected
+        else
+            c = Palette.colors[6] or {200, 200, 200}  -- Light grey for unselected
+        end
+
+        local prefix = (i == menu.selected_campaign) and "> " or "  "
+        renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
+    end
+
+    -- Draw hint at bottom
+    local hint = "[TAB] Back"
+    local hint_c = Palette.colors[6] or {200, 200, 200}
+    renderer.drawText(box_x + 10, box_y + box_height - 15, hint, hint_c[1], hint_c[2], hint_c[3], 1, true)
 end
 
 -- Draw mode selection screen (uses software renderer pixel font)

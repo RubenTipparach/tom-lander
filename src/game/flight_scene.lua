@@ -19,6 +19,7 @@ local Collision = require("collision")
 local Trees = require("trees")
 local Skydome = require("skydome")
 local profile = require("profiler")
+local HUD = require("hud")
 
 local flight_scene = {}
 
@@ -170,6 +171,9 @@ function flight_scene.load()
     -- Initialize minimap
     Minimap.set_position(config.RENDER_WIDTH, config.RENDER_HEIGHT)
 
+    -- Initialize HUD with renderer reference
+    HUD.init(renderer)
+
     -- Enable fog (using config values matching Picotron)
     renderer.setFog(true, config.FOG_START_DISTANCE, config.RENDER_DISTANCE,
         config.FOG_COLOR[1], config.FOG_COLOR[2], config.FOG_COLOR[3])
@@ -182,12 +186,17 @@ function flight_scene.load()
     print("  W/A/S/D or I/J/K/L - Thrusters")
     print("  Space - All thrusters | N - Side pair | M - Front/Back pair")
     print("  Arrow keys - Rotate camera")
-    print("  R - Reset ship")
-    print("  Escape - Return to menu")
+    print("  Tab/Esc - Pause menu")
 end
 
 function flight_scene.update(dt)
     profile("update")
+
+    -- Skip updates when paused
+    if HUD.is_paused() then
+        profile("update")
+        return
+    end
 
     -- Update ship physics
     ship:update(dt)
@@ -439,6 +448,25 @@ function flight_scene.draw()
     Minimap.draw(renderer, Heightmap, ship, LandingPads, cargo_items)
     profile(" minimap")
 
+    -- Draw HUD to software buffer (before blit)
+    profile(" hud")
+    HUD.draw(ship, cam, {
+        game_mode = "arcade",
+        mission = {
+            name = "FREE FLIGHT",
+            objectives = {
+                "Explore the terrain",
+                "Practice landing on pads",
+                "Collect cargo and deliver",
+                "[Tab] Pause  [R] Reset"
+            }
+        },
+        mission_target = nil,  -- TODO: add mission target when mission system exists
+        current_location = nil,  -- TODO: detect current landing pad/building
+        is_repairing = false  -- TODO: add repair logic
+    })
+    profile(" hud")
+
     profile("blit")
     -- Update and draw the software rendered image
     softwareImage:replacePixels(renderer.getImageData())
@@ -465,14 +493,26 @@ function flight_scene.draw()
 end
 
 function flight_scene.keypressed(key)
-    if key == "escape" then
-        local scene_manager = require("scene_manager")
-        scene_manager.switch("menu")
-    elseif key == "q" then
-        -- Toggle SET_CLEAR_COLOR for testing
-        config.SET_CLEAR_COLOR = not config.SET_CLEAR_COLOR
-        print("SET_CLEAR_COLOR: " .. tostring(config.SET_CLEAR_COLOR))
-    elseif key == "r" then
+    -- Handle pause menu actions first
+    if HUD.is_paused() then
+        if key == "q" then
+            -- Return to menu from pause
+            HUD.close_pause()
+            local scene_manager = require("scene_manager")
+            scene_manager.switch("menu")
+            return
+        elseif key == "tab" or key == "escape" then
+            -- Resume game
+            HUD.toggle_pause()
+            return
+        end
+        return  -- Block other keys while paused
+    end
+
+    -- Let HUD handle its keypresses (tab/escape for pause)
+    HUD.keypressed(key)
+
+    if key == "r" then
         -- Reset ship to first landing pad
         local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
         ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
