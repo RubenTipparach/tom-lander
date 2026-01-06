@@ -167,8 +167,8 @@ function lighting.drawLitMesh(meshData, modelMatrix, texture, texData, renderer,
     end
 
     -- Draw triangles with per-triangle average brightness
-    local mvp = mat4.multiply(mat4.multiply(projectionMatrix, viewMatrix), modelMatrix)
-    renderer.setMatrices(mvp, camPos)
+    renderer.setMatrices(projectionMatrix, viewMatrix, camPos)
+    renderer.setModelMatrix(modelMatrix)
 
     for _, tri in ipairs(meshData.triangles) do
         local v1 = meshData.vertices[tri[1]]

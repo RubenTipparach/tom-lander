@@ -394,10 +394,9 @@ function flight_scene.draw()
     -- Set clear color and clear buffers
     renderer.clearBuffers()
 
-    -- Build view-projection matrix with cam_dist offset (like Picotron)
+    -- Build view matrix with cam_dist offset (like Picotron)
     local viewMatrix = camera_module.getViewMatrix(cam, cam_dist)
-    local mvpMatrix = mat4.multiply(projMatrix, viewMatrix)
-    renderer.setMatrices(mvpMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+    renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
     profile("clear")
 
     -- Draw skydome FIRST (always behind everything, follows camera)
@@ -446,6 +445,9 @@ function flight_scene.draw()
     profile(" speedlines")
     speed_lines:draw(renderer, cam)
     profile(" speedlines")
+
+    -- Flush 3D geometry before drawing 2D UI (so UI appears on top)
+    renderer.flush3D()
 
     -- Draw minimap
     profile(" minimap")

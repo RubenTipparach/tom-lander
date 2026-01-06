@@ -3,13 +3,14 @@
 -- Ported from Picotron version with more polygons for smoother appearance
 
 local Constants = require("constants")
+local config = require("config")
 
 local Skydome = {}
 
--- Configuration (more polygons than Picotron's 6 sides)
-local SKYBOX_RADIUS = 100
-local SKYBOX_HEIGHT = 60
-local NUM_SIDES = 16  -- Smoother dome (Picotron used 6, Mission 6 used 16)
+-- Configuration from config.lua
+local SKYBOX_RADIUS = config.SKYBOX_RADIUS or 100
+local SKYBOX_HEIGHT = config.SKYBOX_HEIGHT or 60
+local NUM_SIDES = config.SKYBOX_SIDES or 16
 
 -- Pre-computed vertices and faces
 local skybox_verts = {}
@@ -60,16 +61,10 @@ end
 
 -- Draw skydome centered at camera position
 -- IMPORTANT: This should be called FIRST before other geometry
--- Fog is temporarily disabled so skydome doesn't get dithered
+-- Uses dedicated sky shader (no fog) and no depth test
 function Skydome.draw(renderer, cam_x, cam_y, cam_z)
     local texData = Constants.getTextureData(Constants.SPRITE_SKYBOX)
     if not texData then return end
-
-    -- Temporarily disable fog for skydome (no dithering on sky)
-    local fogWasEnabled = renderer.getFogEnabled()
-    if fogWasEnabled then
-        renderer.setFog(false)
-    end
 
     -- Draw each face of the skydome, offset to camera position
     for _, face in ipairs(skybox_faces) do
@@ -88,10 +83,8 @@ function Skydome.draw(renderer, cam_x, cam_y, cam_z)
         )
     end
 
-    -- Restore fog state
-    if fogWasEnabled then
-        renderer.setFog(true)
-    end
+    -- Flush sky using dedicated sky shader (no fog, no depth test)
+    renderer.flushSky()
 end
 
 return Skydome

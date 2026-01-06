@@ -39,9 +39,17 @@ config.FOV = math.pi / 3  -- 60 degrees
 -- But our heightmap uses TILE_SIZE = 4 world units per tile
 -- Picotron uses 128x128 tiles at 4 units per tile = 512 world unit map
 
-config.RENDER_DISTANCE = 40          -- Max render distance (cull beyond this) - 20 * 4 = 80
-config.FOG_START_DISTANCE = 20       -- Distance where fog begins - 15 * 4 = 60
-config.FOG_COLOR = {40, 40, 60}      -- Fog color (dark blue-gray)
+config.RENDER_DISTANCE = 50          -- Max render distance (cull beyond this)
+config.FOG_START_DISTANCE = 30       -- Distance where fog begins
+config.FOG_MAX_DISTANCE = 50         -- Distance where fog is 100% (should match RENDER_DISTANCE)
+config.FOG_COLOR = {40, 40, 60}      -- Fog color (dark blue-gray, unused - renderer syncs with clear color)
+
+-- ===========================================
+-- SKYDOME SETTINGS
+-- ===========================================
+config.SKYBOX_RADIUS = 30           -- Distance of skydome from camera
+config.SKYBOX_HEIGHT = 60            -- Height of dome apex
+config.SKYBOX_SIDES = 16             -- Number of polygon sides (more = smoother)
 
 -- ===========================================
 -- SHIP PHYSICS CONSTANTS

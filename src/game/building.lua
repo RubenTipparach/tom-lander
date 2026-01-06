@@ -3,6 +3,7 @@
 
 local Constants = require("constants")
 local mat4 = require("mat4")
+local config = require("config")
 
 local Building = {}
 
@@ -97,17 +98,18 @@ end
 
 -- Draw a building using the renderer
 function Building.draw(building, renderer, cam_x, cam_z)
-    -- Build model matrix
-    local modelMatrix = mat4.translation(building.x, building.y, building.z)
-
-    -- Calculate fog factor based on building distance from camera (per-mesh fog)
-    local fogFactor = nil
+    -- Distance culling - skip buildings beyond render distance
     if cam_x and cam_z then
         local dx = building.x - cam_x
         local dz = building.z - cam_z
-        local distance = math.sqrt(dx * dx + dz * dz)
-        fogFactor = renderer.calcFogFactor(distance)
+        local dist_sq = dx * dx + dz * dz
+        if dist_sq > config.RENDER_DISTANCE * config.RENDER_DISTANCE then
+            return
+        end
     end
+
+    -- Build model matrix
+    local modelMatrix = mat4.translation(building.x, building.y, building.z)
 
     for _, tri in ipairs(building.triangles) do
         local texData = Constants.getTextureData(tri.sprite)
@@ -126,9 +128,7 @@ function Building.draw(building, renderer, cam_x, cam_z)
                 {pos = {p2[1], p2[2], p2[3]}, uv = tri.uvs[2]},
                 {pos = {p3[1], p3[2], p3[3]}, uv = tri.uvs[3]},
                 nil,
-                texData,
-                nil,  -- brightness
-                fogFactor
+                texData
             )
         end
     end

@@ -6,6 +6,7 @@ local Constants = require("constants")
 local Collision = require("collision")
 local obj_loader = require("obj_loader")
 local mat4 = require("mat4")
+local config = require("config")
 
 local LandingPads = {}
 
@@ -179,19 +180,20 @@ end
 
 -- Draw a landing pad using the renderer
 function LandingPads.draw_pad(pad, renderer, cam_x, cam_z)
+    -- Distance culling - skip pads beyond render distance
+    if cam_x and cam_z then
+        local dx = pad.x - cam_x
+        local dz = pad.z - cam_z
+        local dist_sq = dx * dx + dz * dz
+        if dist_sq > config.RENDER_DISTANCE * config.RENDER_DISTANCE then
+            return
+        end
+    end
+
     local texData = Constants.getTextureData(Constants.SPRITE_LANDING_PAD)
     if not texData then return end
 
     local modelMatrix = mat4.translation(pad.x, pad.y, pad.z)
-
-    -- Calculate fog factor based on pad distance from camera (per-mesh fog)
-    local fogFactor = nil
-    if cam_x and cam_z then
-        local dx = pad.x - cam_x
-        local dz = pad.z - cam_z
-        local distance = math.sqrt(dx * dx + dz * dz)
-        fogFactor = renderer.calcFogFactor(distance)
-    end
 
     for _, tri in ipairs(pad.triangles) do
         local v1 = pad.vertices[tri[1]]
@@ -207,9 +209,7 @@ function LandingPads.draw_pad(pad, renderer, cam_x, cam_z)
             {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
             {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
             nil,
-            texData,
-            nil,  -- brightness
-            fogFactor
+            texData
         )
     end
 end

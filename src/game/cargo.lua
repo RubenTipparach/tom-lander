@@ -5,6 +5,7 @@ local Constants = require("constants")
 local obj_loader = require("obj_loader")
 local mat4 = require("mat4")
 local quat = require("quat")
+local config = require("config")
 
 local Cargo = {}
 
@@ -180,6 +181,16 @@ end
 function Cargo.draw(cargo, renderer, cam_x, cam_z)
     if cargo.state == "delivered" then return end
 
+    -- Distance culling - skip cargo beyond render distance (unless attached)
+    if cargo.state ~= "attached" and cam_x and cam_z then
+        local dx = cargo.x - cam_x
+        local dz = cargo.z - cam_z
+        local dist_sq = dx * dx + dz * dz
+        if dist_sq > config.RENDER_DISTANCE * config.RENDER_DISTANCE then
+            return
+        end
+    end
+
     local texData = Constants.getTextureData(Constants.SPRITE_CARGO)
     if not texData then return end
 
@@ -191,15 +202,6 @@ function Cargo.draw(cargo, renderer, cam_x, cam_z)
     else
         -- Fallback: identity rotation
         modelMatrix = mat4.translation(cargo.x, cargo.y + cargo.bob_offset, cargo.z)
-    end
-
-    -- Calculate fog factor based on cargo distance from camera (per-mesh fog)
-    local fogFactor = nil
-    if cam_x and cam_z then
-        local dx = cargo.x - cam_x
-        local dz = cargo.z - cam_z
-        local distance = math.sqrt(dx * dx + dz * dz)
-        fogFactor = renderer.calcFogFactor(distance)
     end
 
     for _, tri in ipairs(cargo.triangles) do
@@ -216,9 +218,7 @@ function Cargo.draw(cargo, renderer, cam_x, cam_z)
             {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
             {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
             nil,
-            texData,
-            nil,  -- brightness
-            fogFactor
+            texData
         )
     end
 end

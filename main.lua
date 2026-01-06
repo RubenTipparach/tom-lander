@@ -55,5 +55,17 @@ function love.keypressed(key)
         return
     end
 
+    -- Ctrl+C copies profiler data to clipboard (when profiler is enabled)
+    if key == "c" and love.keyboard.isDown("lctrl", "rctrl") then
+        if profile.is_enabled() then
+            local data = profile.getClipboardData()
+            if data then
+                love.system.setClipboardText(data)
+                print("Profiler data copied to clipboard")
+            end
+        end
+        return
+    end
+
     scene_manager.keypressed(key)
 end

@@ -88,6 +88,9 @@ local function draw_cpu()
     love.graphics.print(string.format("FPS:%d CPU:%.1f%%", fps, cpu_percent), 2, profiler_y_offset + 1)
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.print(string.format("FPS:%d CPU:%.1f%%", fps, cpu_percent), 1, profiler_y_offset)
+
+    -- Reset color to white
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Draw detailed profile breakdown
@@ -146,8 +149,9 @@ local function display_profiles()
     local renderer = require("renderer")
     local stats = renderer.getStats()
 
-    -- Triangle and pixel counts
-    local countText = string.format("Tris: %d  Pix: %dk", stats.trianglesDrawn, math.floor(stats.pixelsDrawn / 1000))
+    -- Triangle and draw call counts
+    local drawCalls = stats.drawCalls or 0
+    local countText = string.format("Tris: %d  Draws: %d", stats.trianglesDrawn, drawCalls)
     love.graphics.setColor(0, 0, 0, 1)
     love.graphics.print(countText, 2, y + 1)
     love.graphics.setColor(0.7, 0.7, 0.7, 1)
@@ -164,6 +168,9 @@ local function display_profiles()
     love.graphics.print(timeText, 2, y + 1)
     love.graphics.setColor(0.6, 0.8, 0.6, 1)  -- Light green
     love.graphics.print(timeText, 1, y)
+
+    -- Reset color to white to prevent tinting other draws
+    love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- Draw both CPU and detailed profiles
@@ -199,6 +206,63 @@ function profile.reset()
     running = {}
     profiles = {}
     averages = {}
+end
+
+-- Get profiler data as clipboard-friendly text
+function profile.getClipboardData()
+    local lines = {}
+    local fps = love.timer.getFPS()
+    local dt = love.timer.getAverageDelta()
+    local cpu_percent = (dt / (1/60)) * 100
+    local frame_budget = 1/60
+
+    table.insert(lines, string.format("=== Tom Lander Profiler ==="))
+    table.insert(lines, string.format("FPS: %d  CPU: %.1f%%", fps, cpu_percent))
+    table.insert(lines, "")
+
+    -- Sort profiles by name
+    local sorted_names = {}
+    for name, _ in pairs(averages) do
+        table.insert(sorted_names, name)
+    end
+    table.sort(sorted_names)
+
+    -- Profile breakdown
+    local total_time = 0
+    for _, name in ipairs(sorted_names) do
+        local avg = averages[name]
+        local sample_count = math.min(#avg.samples, AVERAGE_FRAMES)
+        if sample_count > 0 then
+            local avg_time = avg.sum / sample_count
+            total_time = total_time + avg_time
+            local pct = (avg_time / frame_budget) * 100
+            table.insert(lines, string.format("%-20s %.1f%% (%.2fms)", name, pct, avg_time * 1000))
+        end
+    end
+
+    table.insert(lines, "")
+    local total_pct = (total_time / frame_budget) * 100
+    table.insert(lines, string.format("TOTAL: %.1f%% (%.2fms)", total_pct, total_time * 1000))
+
+    -- Renderer stats
+    local renderer = require("renderer")
+    local stats = renderer.getStats()
+    table.insert(lines, "")
+    local drawCalls = stats.drawCalls or 0
+    table.insert(lines, string.format("Triangles: %d  Draw calls: %d", stats.trianglesDrawn, drawCalls))
+    local config = require("config")
+    if config.USE_GPU_RENDERER then
+        -- GPU renderer: timeRasterize = GPU submit overhead (not actual rasterization)
+        local submitPct = (stats.timeRasterize / frame_budget) * 100
+        table.insert(lines, string.format("GPU Submit: %.1f%% (CPU overhead)", submitPct))
+    else
+        -- Software renderer: actual CPU transform and rasterize time
+        local transformPct = (stats.timeTransform / frame_budget) * 100
+        local rasterPct = (stats.timeRasterize / frame_budget) * 100
+        table.insert(lines, string.format("Transform: %.1f%%  Rasterize: %.1f%%", transformPct, rasterPct))
+    end
+
+    return table.concat(lines, "\n")
 end
 
 return profile

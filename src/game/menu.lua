@@ -729,8 +729,7 @@ function menu.draw()
         -- Apply debug camera rotation
         local debugRotMatrix = mat4.multiply(mat4.rotationY(debug_cam_yaw), mat4.rotationX(debug_cam_pitch))
         viewMatrix = mat4.multiply(viewMatrix, debugRotMatrix)
-        local mvpMatrix = mat4.multiply(projMatrix, viewMatrix)
-        renderer.setMatrices(mvpMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+        renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
 
         -- Draw planet first (smaller sphere, solid)
         local planetTexData = Constants.getTextureData(Constants.SPRITE_PLANET)
@@ -766,7 +765,10 @@ function menu.draw()
             renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, c[1], c[2], c[3], true)  -- skipZBuffer=true
         end
 
-        -- Draw UI text to software framebuffer BEFORE replacePixels
+        -- Flush 3D geometry to canvas first (so UI draws on top)
+        renderer.flush3D()
+
+        -- Draw UI text on top of 3D scene
         if menu.show_mode_select then
             menu.draw_mode_select()
         elseif menu.show_campaign then
@@ -777,7 +779,7 @@ function menu.draw()
             menu.draw_title()
         end
 
-        -- Present the rendered frame to screen
+        -- Present the final frame to screen
         renderer.present()
     end
 

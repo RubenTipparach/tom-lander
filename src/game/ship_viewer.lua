@@ -128,10 +128,9 @@ function ship_viewer.draw()
     -- Clear renderer
     renderer.clearBuffers()
 
-    -- Build view-projection matrix
+    -- Build view matrix
     local viewMatrix = camera_module.getViewMatrix(cam)
-    local mvpMatrix = mat4.multiply(projMatrix, viewMatrix)
-    renderer.setMatrices(mvpMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+    renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
 
     -- Build model matrix for ship (NO rotation, just scale to see it clearly)
     local scale = 0.3  -- Larger scale for visibility
