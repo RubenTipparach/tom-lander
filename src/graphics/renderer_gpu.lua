@@ -3,7 +3,7 @@
 -- Features: Dithered fog, nearest-neighbor texturing, pixel-perfect lines
 
 local config = require("config")
-local bit = require("bit")
+local fonts = require("fonts")
 
 local renderer_gpu = {}
 
@@ -417,83 +417,28 @@ function renderer_gpu.drawCircle(cx, cy, radius, r, g, b)
     love.graphics.setDepthMode("lequal", true)
 end
 
--- Bitmap font
-local font_4x5 = {
-    ["0"] = {0xF,0x9,0x9,0x9,0xF}, ["1"] = {0x2,0x6,0x2,0x2,0x7},
-    ["2"] = {0xF,0x1,0xF,0x8,0xF}, ["3"] = {0xF,0x1,0xF,0x1,0xF},
-    ["4"] = {0x9,0x9,0xF,0x1,0x1}, ["5"] = {0xF,0x8,0xF,0x1,0xF},
-    ["6"] = {0xF,0x8,0xF,0x9,0xF}, ["7"] = {0xF,0x1,0x2,0x4,0x4},
-    ["8"] = {0xF,0x9,0xF,0x9,0xF}, ["9"] = {0xF,0x9,0xF,0x1,0xF},
-    ["A"] = {0x6,0x9,0xF,0x9,0x9}, ["B"] = {0xE,0x9,0xE,0x9,0xE},
-    ["C"] = {0x7,0x8,0x8,0x8,0x7}, ["D"] = {0xE,0x9,0x9,0x9,0xE},
-    ["E"] = {0xF,0x8,0xE,0x8,0xF}, ["F"] = {0xF,0x8,0xE,0x8,0x8},
-    ["G"] = {0x7,0x8,0xB,0x9,0x7}, ["H"] = {0x9,0x9,0xF,0x9,0x9},
-    ["I"] = {0x7,0x2,0x2,0x2,0x7}, ["J"] = {0x7,0x2,0x2,0xA,0x4},
-    ["K"] = {0x9,0xA,0xC,0xA,0x9}, ["L"] = {0x8,0x8,0x8,0x8,0xF},
-    ["M"] = {0x9,0xF,0xF,0x9,0x9}, ["N"] = {0x9,0xD,0xF,0xB,0x9},
-    ["O"] = {0x6,0x9,0x9,0x9,0x6}, ["P"] = {0xE,0x9,0xE,0x8,0x8},
-    ["Q"] = {0x6,0x9,0x9,0xB,0x7}, ["R"] = {0xE,0x9,0xE,0xA,0x9},
-    ["S"] = {0x7,0x8,0x6,0x1,0xE}, ["T"] = {0x7,0x2,0x2,0x2,0x2},
-    ["U"] = {0x9,0x9,0x9,0x9,0x6}, ["V"] = {0x9,0x9,0x9,0x6,0x6},
-    ["W"] = {0x9,0x9,0xF,0xF,0x9}, ["X"] = {0x9,0x9,0x6,0x9,0x9},
-    ["Y"] = {0x5,0x5,0x2,0x2,0x2}, ["Z"] = {0xF,0x1,0x6,0x8,0xF},
-    [":"] = {0x0,0x2,0x0,0x2,0x0}, ["."] = {0x0,0x0,0x0,0x0,0x2},
-    [","] = {0x0,0x0,0x0,0x2,0x4}, ["-"] = {0x0,0x0,0x7,0x0,0x0},
-    ["/"] = {0x1,0x1,0x2,0x4,0x4}, ["%"] = {0x9,0x1,0x2,0x4,0x9},
-    ["!"] = {0x2,0x2,0x2,0x0,0x2}, ["?"] = {0x6,0x1,0x2,0x0,0x2},
-    ["("] = {0x1,0x2,0x2,0x2,0x1}, [")"] = {0x4,0x2,0x2,0x2,0x4},
-    ["["] = {0x3,0x2,0x2,0x2,0x3}, ["]"] = {0x6,0x2,0x2,0x2,0x6},
-    [" "] = {0x0,0x0,0x0,0x0,0x0},
-    ["a"] = {0x0,0x6,0xB,0x9,0x7}, ["b"] = {0x8,0xE,0x9,0x9,0xE},
-    ["c"] = {0x0,0x7,0x8,0x8,0x7}, ["d"] = {0x1,0x7,0x9,0x9,0x7},
-    ["e"] = {0x0,0x6,0xF,0x8,0x7}, ["f"] = {0x3,0x4,0xE,0x4,0x4},
-    ["g"] = {0x0,0x7,0x9,0x7,0xE}, ["h"] = {0x8,0xE,0x9,0x9,0x9},
-    ["i"] = {0x2,0x0,0x2,0x2,0x2}, ["j"] = {0x1,0x0,0x1,0x9,0x6},
-    ["k"] = {0x8,0x9,0xE,0x9,0x9}, ["l"] = {0x6,0x2,0x2,0x2,0x7},
-    ["m"] = {0x0,0xF,0xF,0x9,0x9}, ["n"] = {0x0,0xE,0x9,0x9,0x9},
-    ["o"] = {0x0,0x6,0x9,0x9,0x6}, ["p"] = {0x0,0xE,0x9,0xE,0x8},
-    ["q"] = {0x0,0x7,0x9,0x7,0x1}, ["r"] = {0x0,0xB,0xC,0x8,0x8},
-    ["s"] = {0x0,0x7,0x4,0x2,0xE}, ["t"] = {0x2,0x7,0x2,0x2,0x1},
-    ["u"] = {0x0,0x9,0x9,0x9,0x7}, ["v"] = {0x0,0x9,0x9,0x6,0x6},
-    ["w"] = {0x0,0x9,0xF,0xF,0x9}, ["x"] = {0x0,0x9,0x6,0x6,0x9},
-    ["y"] = {0x0,0x9,0x7,0x1,0x6}, ["z"] = {0x0,0xF,0x2,0x4,0xF},
-}
+-- Text queue for deferred rendering (drawn after canvas scaling for crisp text)
+local textQueue = {}
 
-local function drawCharGPU(char, x, y, r, g, b, scale)
-    scale = scale or 1
-    local glyph = font_4x5[char]
-    if not glyph then return 4 * scale end
-    love.graphics.setColor(r/255, g/255, b/255, 1)
-    for row = 0, 4 do
-        local bits = glyph[row + 1]
-        for col = 0, 3 do
-            if bit.band(bits, bit.lshift(1, 3 - col)) ~= 0 then
-                love.graphics.rectangle("fill", math.floor(x + col * scale), math.floor(y + row * scale), scale, scale)
-            end
-        end
-    end
-    love.graphics.setColor(1, 1, 1, 1)
-    return 5 * scale
-end
-
+-- Queue text for deferred rendering
 function renderer_gpu.drawText(x, y, text, r, g, b, scale, shadow)
-    love.graphics.setDepthMode()
     scale = scale or 1
     if shadow == nil then shadow = true end
-    x = math.floor(x)
-    y = math.floor(y)
-    if shadow then
-        local cursorX = x + scale
-        for i = 1, #text do
-            cursorX = cursorX + drawCharGPU(text:sub(i,i), cursorX, y + scale, 0, 0, 0, scale)
-        end
-    end
-    local cursorX = x
-    for i = 1, #text do
-        cursorX = cursorX + drawCharGPU(text:sub(i,i), cursorX, y, r, g, b, scale)
-    end
-    love.graphics.setDepthMode("lequal", true)
-    return cursorX - x
+
+    table.insert(textQueue, {
+        x = math.floor(x),
+        y = math.floor(y),
+        text = text,
+        r = r,
+        g = g,
+        b = b,
+        scale = scale,
+        shadow = shadow
+    })
+
+    -- Return approximate width (based on render resolution font)
+    local font = fonts.get(8 * scale)
+    return font:getWidth(text)
 end
 
 function renderer_gpu.getCanvas()
@@ -514,8 +459,6 @@ function renderer_gpu.flushSky()
         shaderSky:send("viewMatrix", currentViewMatrix)
         shaderSky:send("modelMatrix", currentModelMatrix)
     end
-
-    shaderSky:send("isCanvasEnabled", love.graphics.getCanvas() ~= nil)
 
     -- Draw all batched triangles with sky shader
     for image, batch in pairs(batchesByTexture) do
@@ -564,13 +507,15 @@ function renderer_gpu.flush3D()
     end
 
     shader3D:send("u_ditherEnabled", ditherEnabled)
-    shader3D:send("isCanvasEnabled", love.graphics.getCanvas() ~= nil)
 
     -- Send fog uniforms
     shader3D:send("u_fogEnabled", fogEnabled and 1.0 or 0.0)
     shader3D:send("u_fogNear", fogNear)
     shader3D:send("u_fogFar", fogFar)
     shader3D:send("u_fogColor", fogColor)
+
+    -- Enable backface culling (use "front" because shader Y-flip reverses winding order)
+    love.graphics.setMeshCullMode("front")
 
     -- Draw all batched triangles
     for image, batch in pairs(batchesByTexture) do
@@ -594,6 +539,7 @@ function renderer_gpu.flush3D()
         end
     end
 
+    love.graphics.setMeshCullMode("none")  -- Disable culling for 2D
     love.graphics.setShader()
     love.graphics.setDepthMode()  -- Disable depth for subsequent 2D drawing
     stats.timeRasterize = stats.timeRasterize + (love.timer.getTime() - t0)
@@ -619,6 +565,32 @@ function renderer_gpu.present()
     local offsetY = (love.graphics.getHeight() - RENDER_HEIGHT * scale) / 2
 
     love.graphics.draw(canvas, offsetX, offsetY, 0, scale, scale)
+
+    -- Draw queued text at screen resolution (crisp, not scaled with canvas)
+    local prevFont = love.graphics.getFont()
+    for _, t in ipairs(textQueue) do
+        -- Scale font size to match screen scale (font scale * canvas scale)
+        local fontSize = math.max(8, math.floor(8 * t.scale * scale))
+        local font = fonts.get(fontSize)
+        love.graphics.setFont(font)
+
+        -- Convert render coords to screen coords
+        local screenX = offsetX + t.x * scale
+        local screenY = offsetY + t.y * scale
+
+        if t.shadow then
+            love.graphics.setColor(0, 0, 0, 1)
+            love.graphics.print(t.text, screenX + scale, screenY + scale)
+        end
+
+        love.graphics.setColor(t.r/255, t.g/255, t.b/255, 1)
+        love.graphics.print(t.text, screenX, screenY)
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setFont(prevFont)
+
+    -- Clear text queue for next frame
+    textQueue = {}
 end
 
 -- Compatibility functions
@@ -686,8 +658,6 @@ function renderer_gpu.flushTerrain()
         shaderTerrain:send("modelMatrix", currentModelMatrix)
     end
 
-    shaderTerrain:send("isCanvasEnabled", love.graphics.getCanvas() ~= nil)
-
     -- Send terrain textures
     shaderTerrain:send("u_texGround", terrainTextures.ground)
     shaderTerrain:send("u_texGrass", terrainTextures.grass)
@@ -709,6 +679,9 @@ function renderer_gpu.flushTerrain()
     shaderTerrain:send("u_fogFar", fogFar)
     shaderTerrain:send("u_fogColor", fogColor)
 
+    -- Enable backface culling for terrain (use "front" because shader Y-flip reverses winding order)
+    love.graphics.setMeshCullMode("front")
+
     -- Draw terrain batch
     local vertCount = terrainBatch.count * 3
     batchMesh:setVertices(terrainBatch.vertices, 1, vertCount)
@@ -720,6 +693,7 @@ function renderer_gpu.flushTerrain()
     stats.drawCalls = stats.drawCalls + 1
     stats.batchCount = stats.batchCount + 1
 
+    love.graphics.setMeshCullMode("none")
     love.graphics.setShader()
 
     -- Clear terrain batch for next frame
@@ -754,7 +728,7 @@ function renderer_gpu.worldToScreen(world_x, world_y, world_z)
     local sz = proj[9]*vx + proj[10]*vy + proj[11]*vz + proj[12]*vw
     local sw = proj[13]*vx + proj[14]*vy + proj[15]*vz + proj[16]*vw
 
-    -- Step 3: Canvas Y flip (shader does screenPosition.y *= -1 when isCanvasEnabled)
+    -- Step 3: Y flip (baked into projection matrix for canvas rendering)
     sy = -sy
 
     -- Step 4: Perspective divide (GPU does this automatically)

@@ -2,6 +2,8 @@
 -- Displays story scenes with images and text
 -- Ported from Picotron version for Love2D
 
+local fonts = require("fonts")
+
 local Cutscene = {}
 
 -- Configuration
@@ -220,8 +222,9 @@ function Cutscene.draw()
     local y = offsetY + TEXT_Y_START * scale
     local chars_remaining = Cutscene.chars_shown
 
-    -- Use default Love2D font
-    local font = love.graphics.getFont()
+    -- Use Perfect DOS VGA font
+    local font = fonts.get(16)
+    love.graphics.setFont(font)
 
     for _, line in ipairs(scene.text) do
         if chars_remaining <= 0 then break end

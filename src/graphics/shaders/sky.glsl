@@ -4,7 +4,6 @@
 uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
 uniform mat4 modelMatrix;
-uniform bool isCanvasEnabled;
 uniform vec2 u_textureSize;
 
 #ifdef VERTEX
@@ -19,9 +18,8 @@ vec4 position(mat4 transformProjection, vec4 vertexPosition) {
     v_texCoord = VaryingTexCoord.xy;
     v_color = VaryingColor;
 
-    if (isCanvasEnabled) {
-        screenPosition.y *= -1.0;
-    }
+    // Flip Y for canvas rendering (LÖVE's canvas has inverted Y)
+    screenPosition.y *= -1.0;
 
     return screenPosition;
 }

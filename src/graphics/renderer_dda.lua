@@ -5,6 +5,7 @@ local config = require("config")
 local ffi = require("ffi")
 local bit = require("bit")
 local mat4 = require("mat4")
+local fonts = require("fonts")
 local renderer_dda = {}
 
 -- Localize frequently used functions for LuaJIT optimization
@@ -1059,89 +1060,8 @@ function renderer_dda.drawLine2D(x0, y0, x1, y1, r, g, b)
     end
 end
 
--- Simple 4x5 bitmap font for basic characters
--- Each character is defined as a 4-wide, 5-tall bitmap (stored as 5 rows of 4 bits)
-local font_4x5 = {
-    -- Numbers 0-9
-    ["0"] = {0xF,0x9,0x9,0x9,0xF},
-    ["1"] = {0x2,0x6,0x2,0x2,0x7},
-    ["2"] = {0xF,0x1,0xF,0x8,0xF},
-    ["3"] = {0xF,0x1,0xF,0x1,0xF},
-    ["4"] = {0x9,0x9,0xF,0x1,0x1},
-    ["5"] = {0xF,0x8,0xF,0x1,0xF},
-    ["6"] = {0xF,0x8,0xF,0x9,0xF},
-    ["7"] = {0xF,0x1,0x2,0x4,0x4},
-    ["8"] = {0xF,0x9,0xF,0x9,0xF},
-    ["9"] = {0xF,0x9,0xF,0x1,0xF},
-    -- Letters A-Z
-    ["A"] = {0x6,0x9,0xF,0x9,0x9},
-    ["B"] = {0xE,0x9,0xE,0x9,0xE},
-    ["C"] = {0x7,0x8,0x8,0x8,0x7},
-    ["D"] = {0xE,0x9,0x9,0x9,0xE},
-    ["E"] = {0xF,0x8,0xE,0x8,0xF},
-    ["F"] = {0xF,0x8,0xE,0x8,0x8},
-    ["G"] = {0x7,0x8,0xB,0x9,0x7},
-    ["H"] = {0x9,0x9,0xF,0x9,0x9},
-    ["I"] = {0x7,0x2,0x2,0x2,0x7},
-    ["J"] = {0x7,0x2,0x2,0xA,0x4},
-    ["K"] = {0x9,0xA,0xC,0xA,0x9},
-    ["L"] = {0x8,0x8,0x8,0x8,0xF},
-    ["M"] = {0x9,0xF,0xF,0x9,0x9},
-    ["N"] = {0x9,0xD,0xF,0xB,0x9},
-    ["O"] = {0x6,0x9,0x9,0x9,0x6},
-    ["P"] = {0xE,0x9,0xE,0x8,0x8},
-    ["Q"] = {0x6,0x9,0x9,0xB,0x7},
-    ["R"] = {0xE,0x9,0xE,0xA,0x9},
-    ["S"] = {0x7,0x8,0x6,0x1,0xE},
-    ["T"] = {0x7,0x2,0x2,0x2,0x2},
-    ["U"] = {0x9,0x9,0x9,0x9,0x6},
-    ["V"] = {0x9,0x9,0x9,0x6,0x6},
-    ["W"] = {0x9,0x9,0xF,0xF,0x9},
-    ["X"] = {0x9,0x9,0x6,0x9,0x9},
-    ["Y"] = {0x5,0x5,0x2,0x2,0x2},
-    ["Z"] = {0xF,0x1,0x6,0x8,0xF},
-    -- Punctuation and symbols
-    [":"] = {0x0,0x2,0x0,0x2,0x0},
-    ["."] = {0x0,0x0,0x0,0x0,0x2},
-    [","] = {0x0,0x0,0x0,0x2,0x4},
-    ["-"] = {0x0,0x0,0x7,0x0,0x0},
-    ["/"] = {0x1,0x1,0x2,0x4,0x4},
-    ["%"] = {0x9,0x1,0x2,0x4,0x9},
-    ["!"] = {0x2,0x2,0x2,0x0,0x2},
-    ["?"] = {0x6,0x1,0x2,0x0,0x2},
-    ["("] = {0x1,0x2,0x2,0x2,0x1},
-    [")"] = {0x4,0x2,0x2,0x2,0x4},
-    ["["] = {0x3,0x2,0x2,0x2,0x3},
-    ["]"] = {0x6,0x2,0x2,0x2,0x6},
-    [" "] = {0x0,0x0,0x0,0x0,0x0},
-    -- Lowercase (map to uppercase-like glyphs, slightly smaller feel)
-    ["a"] = {0x0,0x6,0xB,0x9,0x7},
-    ["b"] = {0x8,0xE,0x9,0x9,0xE},
-    ["c"] = {0x0,0x7,0x8,0x8,0x7},
-    ["d"] = {0x1,0x7,0x9,0x9,0x7},
-    ["e"] = {0x0,0x6,0xF,0x8,0x7},
-    ["f"] = {0x3,0x4,0xE,0x4,0x4},
-    ["g"] = {0x0,0x7,0x9,0x7,0xE},
-    ["h"] = {0x8,0xE,0x9,0x9,0x9},
-    ["i"] = {0x2,0x0,0x2,0x2,0x2},
-    ["j"] = {0x1,0x0,0x1,0x9,0x6},
-    ["k"] = {0x8,0x9,0xE,0x9,0x9},
-    ["l"] = {0x6,0x2,0x2,0x2,0x7},
-    ["m"] = {0x0,0xF,0xF,0x9,0x9},
-    ["n"] = {0x0,0xE,0x9,0x9,0x9},
-    ["o"] = {0x0,0x6,0x9,0x9,0x6},
-    ["p"] = {0x0,0xE,0x9,0xE,0x8},
-    ["q"] = {0x0,0x7,0x9,0x7,0x1},
-    ["r"] = {0x0,0xB,0xC,0x8,0x8},
-    ["s"] = {0x0,0x7,0x4,0x2,0xE},
-    ["t"] = {0x2,0x7,0x2,0x2,0x1},
-    ["u"] = {0x0,0x9,0x9,0x9,0x7},
-    ["v"] = {0x0,0x9,0x9,0x6,0x6},
-    ["w"] = {0x0,0x9,0xF,0xF,0x9},
-    ["x"] = {0x0,0x9,0x6,0x6,0x9},
-    ["y"] = {0x0,0x9,0x7,0x1,0x6},
-    ["z"] = {0x0,0xF,0x2,0x4,0xF},
-}
+-- Text queue for deferred rendering with TTF font
+local textQueue = {}
 
 -- Draw a single pixel (public function for minimap, etc.)
 function renderer_dda.drawPixel(x, y, r, g, b)
@@ -1263,47 +1183,12 @@ function renderer_dda.drawCircle(cx, cy, radius, r, g, b)
     end
 end
 
--- Draw a single pixel (helper for text)
-local function drawPixelDirect(x, y, r, g, b)
-    if x >= 0 and x < RENDER_WIDTH and y >= 0 and y < RENDER_HEIGHT then
-        local index = y * RENDER_WIDTH + x
-        local pixelIndex = index * 4
-        framebufferPtr[pixelIndex] = r
-        framebufferPtr[pixelIndex + 1] = g
-        framebufferPtr[pixelIndex + 2] = b
-        framebufferPtr[pixelIndex + 3] = 255
-    end
+-- Font sizes: scale 1 = 8px, scale 2 = 16px
+local function getFontSize(scale)
+    return math.max(8, math.floor(8 * scale))
 end
 
--- Draw a single character at position (x, y) with color (r, g, b)
--- Returns the width of the character drawn
-local function drawChar(char, x, y, r, g, b, scale)
-    scale = scale or 1
-    local glyph = font_4x5[char]
-    if not glyph then return 4 * scale end  -- Space for unknown chars
-
-    for row = 0, 4 do
-        local bits = glyph[row + 1]
-        for col = 0, 3 do
-            if bit.band(bits, bit.lshift(1, 3 - col)) ~= 0 then
-                -- Draw scaled pixel
-                for sy = 0, scale - 1 do
-                    for sx = 0, scale - 1 do
-                        drawPixelDirect(
-                            math.floor(x + col * scale + sx),
-                            math.floor(y + row * scale + sy),
-                            r, g, b
-                        )
-                    end
-                end
-            end
-        end
-    end
-
-    return 5 * scale  -- Character width + 1 pixel spacing
-end
-
--- Draw text with drop shadow
+-- Queue text for deferred rendering with TTF font
 -- x, y: position in render coordinates
 -- text: string to draw
 -- r, g, b: text color (0-255)
@@ -1313,28 +1198,20 @@ function renderer_dda.drawText(x, y, text, r, g, b, scale, shadow)
     scale = scale or 1
     if shadow == nil then shadow = true end
 
-    x = math.floor(x)
-    y = math.floor(y)
+    table.insert(textQueue, {
+        x = math.floor(x),
+        y = math.floor(y),
+        text = text,
+        r = r,
+        g = g,
+        b = b,
+        scale = scale,
+        shadow = shadow
+    })
 
-    -- Draw shadow first (offset by 1 pixel)
-    if shadow then
-        local shadowX = x + scale
-        local shadowY = y + scale
-        local cursorX = shadowX
-        for i = 1, #text do
-            local char = text:sub(i, i)
-            cursorX = cursorX + drawChar(char, cursorX, shadowY, 0, 0, 0, scale)
-        end
-    end
-
-    -- Draw main text
-    local cursorX = x
-    for i = 1, #text do
-        local char = text:sub(i, i)
-        cursorX = cursorX + drawChar(char, cursorX, y, r, g, b, scale)
-    end
-
-    return cursorX - x  -- Return total width
+    -- Return approximate width
+    local font = fonts.get(getFontSize(scale))
+    return font:getWidth(text)
 end
 
 -- Cached software image for presentation
@@ -1362,10 +1239,33 @@ function renderer_dda.present()
     local offsetX = (windowW - RENDER_WIDTH * scale) / 2
     local offsetY = (windowH - RENDER_HEIGHT * scale) / 2
 
-    -- Clear and draw
+    -- Clear and draw framebuffer
     love.graphics.clear(0, 0, 0, 1)
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
+
+    -- Draw queued text with TTF font (scaled to match framebuffer)
+    local prevFont = love.graphics.getFont()
+    for _, t in ipairs(textQueue) do
+        local font = fonts.get(getFontSize(t.scale))
+        love.graphics.setFont(font)
+
+        local screenX = offsetX + t.x * scale
+        local screenY = offsetY + t.y * scale
+
+        if t.shadow then
+            love.graphics.setColor(0, 0, 0, 1)
+            love.graphics.print(t.text, screenX + scale, screenY + scale)
+        end
+
+        love.graphics.setColor(t.r/255, t.g/255, t.b/255, 1)
+        love.graphics.print(t.text, screenX, screenY)
+    end
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setFont(prevFont)
+
+    -- Clear text queue for next frame
+    textQueue = {}
 end
 
 return renderer_dda

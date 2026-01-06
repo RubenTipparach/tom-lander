@@ -4,7 +4,6 @@
 uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
 uniform mat4 modelMatrix;
-uniform bool isCanvasEnabled;
 
 // Terrain textures
 uniform Image u_texGround;
@@ -43,9 +42,8 @@ vec4 position(mat4 transformProjection, vec4 vertexPosition) {
     // Height is passed via vertex color alpha channel (scaled 0-1 for 0-32 range)
     v_height = VaryingColor.a * 32.0;
 
-    if (isCanvasEnabled) {
-        screenPosition.y *= -1.0;
-    }
+    // Flip Y for canvas rendering (LÖVE's canvas has inverted Y)
+    screenPosition.y *= -1.0;
 
     return screenPosition;
 }
