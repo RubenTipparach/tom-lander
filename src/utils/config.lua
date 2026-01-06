@@ -52,6 +52,21 @@ config.SKYBOX_HEIGHT = 60            -- Height of dome apex
 config.SKYBOX_SIDES = 16             -- Number of polygon sides (more = smoother)
 
 -- ===========================================
+-- TERRAIN TEXTURE SETTINGS
+-- ===========================================
+-- Height thresholds (palette index 0-31)
+config.TERRAIN_GROUND_TO_GRASS = 3   -- Height where ground transitions to grass
+config.TERRAIN_GRASS_TO_ROCKS = 10   -- Height where grass transitions to rocks
+-- Blend ranges (height units for dithered transition zone)
+config.TERRAIN_GROUND_GRASS_BLEND = 2.0  -- Ground-to-grass (sand) transition range
+config.TERRAIN_GRASS_ROCKS_BLEND = 4.0   -- Grass-to-rocks transition range
+
+-- ===========================================
+-- HUD SETTINGS
+-- ===========================================
+config.THRUSTER_LABEL_Y_OFFSET = 4   -- Y offset for WASD thruster labels above engines
+
+-- ===========================================
 -- SHIP PHYSICS CONSTANTS
 -- ===========================================
 

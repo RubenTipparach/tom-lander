@@ -19,6 +19,17 @@ local depthCanvas = nil
 local shader3D = nil
 local shaderFlat = nil
 local shaderSky = nil  -- Dedicated sky shader (no fog)
+local shaderTerrain = nil  -- Terrain shader with height-based texture blending
+
+-- Terrain textures for shader
+local terrainTextures = {
+    ground = nil,
+    grass = nil,
+    rocks = nil
+}
+
+-- Terrain batch (separate from regular batches)
+local terrainBatch = {vertices = {}, count = 0}
 
 -- Current state (separate matrices like g3d)
 local currentProjectionMatrix = nil
@@ -122,6 +133,23 @@ function renderer_gpu.init(width, height)
         shaderSky = shader3D
     end
 
+    -- Load terrain shader (height-based texture blending)
+    local shaderTerrainCode = love.filesystem.read(shaderPath .. "terrain.glsl")
+    if shaderTerrainCode then
+        local ok, shaderOrErr = pcall(love.graphics.newShader, shaderTerrainCode)
+        if ok then
+            shaderTerrain = shaderOrErr
+            print("Terrain shader compiled successfully")
+        else
+            print("Terrain shader compilation error: " .. tostring(shaderOrErr))
+            -- Fall back to 3D shader if terrain shader fails
+            shaderTerrain = shader3D
+        end
+    else
+        print("Could not load terrain.glsl shader, using 3D shader")
+        shaderTerrain = shader3D
+    end
+
     -- Create persistent mesh for batched drawing
     batchMesh = love.graphics.newMesh(vertexFormat3D, MAX_VERTICES, "triangles", "stream")
 
@@ -143,6 +171,7 @@ function renderer_gpu.clearBuffers()
     for _, batch in pairs(batchesByTexture) do
         batch.count = 0
     end
+    terrainBatch.count = 0  -- Clear terrain batch
     flushed3D = false  -- Reset flush flag for new frame
 
     -- Set render target with depth buffer
@@ -606,6 +635,140 @@ function renderer_gpu.calcFogFactor(distance)
     end
     local factor = (distance - fogNear) / (fogFar - fogNear)
     return math.max(0, math.min(1, factor))
+end
+
+-- Set terrain textures for shader-based blending
+function renderer_gpu.setTerrainTextures(groundTex, grassTex, rocksTex)
+    terrainTextures.ground = getImage(groundTex)
+    terrainTextures.grass = getImage(grassTex)
+    terrainTextures.rocks = getImage(rocksTex)
+end
+
+-- Add a terrain triangle with per-vertex height data
+-- Height is passed via vertex color alpha (scaled to 0-1 for 0-32 range)
+function renderer_gpu.drawTerrainTriangle(v1, v2, v3, h1, h2, h3, brightness)
+    if not currentProjectionMatrix then
+        error("Must call renderer_gpu.setMatrices() before drawTerrainTriangle()")
+    end
+
+    local verts = terrainBatch.vertices
+    local idx = terrainBatch.count * 3
+    local bright = brightness or 1.0
+
+    -- Height is stored in alpha channel, scaled from 0-32 to 0-1
+    local a1 = h1 / 32.0
+    local a2 = h2 / 32.0
+    local a3 = h3 / 32.0
+
+    -- Format: {x, y, z, w, u, v, r, g, b, a}
+    verts[idx + 1] = {v1.pos[1], v1.pos[2], v1.pos[3], 1.0, v1.uv[1], v1.uv[2], bright, bright, bright, a1}
+    verts[idx + 2] = {v2.pos[1], v2.pos[2], v2.pos[3], 1.0, v2.uv[1], v2.uv[2], bright, bright, bright, a2}
+    verts[idx + 3] = {v3.pos[1], v3.pos[2], v3.pos[3], 1.0, v3.uv[1], v3.uv[2], bright, bright, bright, a3}
+    terrainBatch.count = terrainBatch.count + 1
+    stats.trianglesDrawn = stats.trianglesDrawn + 1
+end
+
+-- Flush terrain triangles using terrain shader with multi-texture blending
+function renderer_gpu.flushTerrain()
+    if terrainBatch.count == 0 then return end
+    if not terrainTextures.ground or not terrainTextures.grass or not terrainTextures.rocks then
+        print("Warning: Terrain textures not set, skipping terrain flush")
+        return
+    end
+
+    -- Set up terrain shader
+    love.graphics.setShader(shaderTerrain)
+
+    -- Send matrices to shader
+    if currentProjectionMatrix and currentViewMatrix and currentModelMatrix then
+        shaderTerrain:send("projectionMatrix", currentProjectionMatrix)
+        shaderTerrain:send("viewMatrix", currentViewMatrix)
+        shaderTerrain:send("modelMatrix", currentModelMatrix)
+    end
+
+    shaderTerrain:send("isCanvasEnabled", love.graphics.getCanvas() ~= nil)
+
+    -- Send terrain textures
+    shaderTerrain:send("u_texGround", terrainTextures.ground)
+    shaderTerrain:send("u_texGrass", terrainTextures.grass)
+    shaderTerrain:send("u_texRocks", terrainTextures.rocks)
+
+    -- Texture size (assuming all terrain textures are same size)
+    local texW, texH = terrainTextures.ground:getDimensions()
+    shaderTerrain:send("u_textureSize", {texW, texH})
+
+    -- Height thresholds from config
+    shaderTerrain:send("u_groundToGrass", config.TERRAIN_GROUND_TO_GRASS or 3.0)
+    shaderTerrain:send("u_grassToRocks", config.TERRAIN_GRASS_TO_ROCKS or 10.0)
+    shaderTerrain:send("u_groundGrassBlend", config.TERRAIN_GROUND_GRASS_BLEND or 2.0)
+    shaderTerrain:send("u_grassRocksBlend", config.TERRAIN_GRASS_ROCKS_BLEND or 4.0)
+
+    -- Fog settings
+    shaderTerrain:send("u_fogEnabled", fogEnabled and 1.0 or 0.0)
+    shaderTerrain:send("u_fogNear", fogNear)
+    shaderTerrain:send("u_fogFar", fogFar)
+    shaderTerrain:send("u_fogColor", fogColor)
+
+    -- Draw terrain batch
+    local vertCount = terrainBatch.count * 3
+    batchMesh:setVertices(terrainBatch.vertices, 1, vertCount)
+    batchMesh:setTexture(terrainTextures.ground)  -- Base texture for mesh, shader will sample all 3
+    batchMesh:setDrawRange(1, vertCount)
+
+    love.graphics.draw(batchMesh)
+
+    stats.drawCalls = stats.drawCalls + 1
+    stats.batchCount = stats.batchCount + 1
+
+    love.graphics.setShader()
+
+    -- Clear terrain batch for next frame
+    terrainBatch.count = 0
+end
+
+-- Project a 3D world position to 2D screen coordinates
+-- Matches exactly what the GPU shader does
+-- Returns screen_x, screen_y, is_visible (behind camera check)
+function renderer_gpu.worldToScreen(world_x, world_y, world_z)
+    if not currentProjectionMatrix or not currentViewMatrix then
+        return nil, nil, false
+    end
+
+    -- Step 1: viewPosition = viewMatrix * worldPosition
+    -- mat4.multiplyVec4 does: result[row] = sum(m[row*4+col] * v[col])
+    local view = currentViewMatrix
+    local vx = view[1]*world_x + view[2]*world_y + view[3]*world_z + view[4]
+    local vy = view[5]*world_x + view[6]*world_y + view[7]*world_z + view[8]
+    local vz = view[9]*world_x + view[10]*world_y + view[11]*world_z + view[12]
+    local vw = view[13]*world_x + view[14]*world_y + view[15]*world_z + view[16]
+
+    -- Behind camera check (negative Z is in front in view space for right-handed coords)
+    if vz >= 0 then
+        return nil, nil, false
+    end
+
+    -- Step 2: screenPosition = projectionMatrix * viewPosition
+    local proj = currentProjectionMatrix
+    local sx = proj[1]*vx + proj[2]*vy + proj[3]*vz + proj[4]*vw
+    local sy = proj[5]*vx + proj[6]*vy + proj[7]*vz + proj[8]*vw
+    local sz = proj[9]*vx + proj[10]*vy + proj[11]*vz + proj[12]*vw
+    local sw = proj[13]*vx + proj[14]*vy + proj[15]*vz + proj[16]*vw
+
+    -- Step 3: Canvas Y flip (shader does screenPosition.y *= -1 when isCanvasEnabled)
+    sy = -sy
+
+    -- Step 4: Perspective divide (GPU does this automatically)
+    if math.abs(sw) < 0.001 then
+        return nil, nil, false
+    end
+    local ndc_x = sx / sw
+    local ndc_y = sy / sw
+
+    -- Step 5: Viewport transform (GPU does this: screen = (ndc + 1) * 0.5 * size)
+    local screen_x = (ndc_x + 1) * 0.5 * RENDER_WIDTH
+    local screen_y = (ndc_y + 1) * 0.5 * RENDER_HEIGHT
+
+    return screen_x, screen_y, true
 end
 
 return renderer_gpu

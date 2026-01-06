@@ -114,6 +114,7 @@ function Heightmap.get_height(world_x, world_z)
 end
 
 -- Generate terrain mesh around camera position
+-- Returns vertices with per-vertex height index for shader-based texture blending
 function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
     render_distance = render_distance or 20
     if not grid_count then
@@ -131,18 +132,30 @@ function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
     local center_z = floor(cam_z / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
 
     -- Create vertices for a (grid_count+1) x (grid_count+1) grid
+    -- Each vertex stores both world position AND raw height index for shader blending
     for gz = 0, grid_count do
         for gx = 0, grid_count do
             local world_x = center_x + gx * Heightmap.TILE_SIZE - half_size
             local world_z = center_z + gz * Heightmap.TILE_SIZE - half_size
 
-            local height = Heightmap.get_height(world_x, world_z)
-            table.insert(verts, {pos = {world_x, height, world_z}})
+            -- Get tile coordinates
+            local tile_x, tile_z = Heightmap.world_to_tile(world_x, world_z)
+
+            -- Get raw height index (0-31) for this vertex
+            local height_index = 0
+            if tile_x >= 0 and tile_x < Heightmap.MAP_SIZE and tile_z >= 0 and tile_z < Heightmap.MAP_SIZE then
+                height_index = get_pixel_height_index(tile_x, tile_z)
+            end
+
+            local height = height_index * Heightmap.HEIGHT_SCALE
+            table.insert(verts, {
+                pos = {world_x, height, world_z},
+                height_index = height_index  -- Raw palette index for shader
+            })
         end
     end
 
-    -- Create faces with appropriate textures based on height
-    -- Uses Picotron's palette index thresholds: 0=water, 3+=grass, 10+=rocks
+    -- Create faces - now we track per-vertex height indices
     for gz = 0, grid_count - 1 do
         for gx = 0, grid_count - 1 do
             local v1 = gz * (grid_count + 1) + gx + 1
@@ -150,77 +163,26 @@ function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)
             local v3 = (gz + 1) * (grid_count + 1) + gx + 2
             local v4 = (gz + 1) * (grid_count + 1) + gx + 1
 
-            -- Get heights (world space)
-            local h1 = verts[v1].pos[2]
-            local h2 = verts[v2].pos[2]
-            local h3 = verts[v3].pos[2]
-            local h4 = verts[v4].pos[2]
+            -- Get height indices for all 4 corners
+            local hi1 = verts[v1].height_index
+            local hi2 = verts[v2].height_index
+            local hi3 = verts[v3].height_index
+            local hi4 = verts[v4].height_index
 
-            local is_flat = (h1 == h2 and h2 == h3 and h3 == h4)
+            -- Check if this is water (all corners at height 0 and flat)
+            local is_water = (hi1 == 0 and hi2 == 0 and hi3 == 0 and hi4 == 0)
 
-            -- Get world coordinates for this quad
-            local world_x1 = center_x + gx * Heightmap.TILE_SIZE - half_size
-            local world_z1 = center_z + gz * Heightmap.TILE_SIZE - half_size
-            local world_x2 = world_x1 + Heightmap.TILE_SIZE
-            local world_z2 = world_z1 + Heightmap.TILE_SIZE
-
-            -- Convert to tile coordinates
-            local tile_x1, tile_z1 = Heightmap.world_to_tile(world_x1, world_z1)
-            local tile_x2, tile_z2 = Heightmap.world_to_tile(world_x2, world_z2)
-
-            -- Sample raw height indices (0-31) at all 4 corners
-            local height_indices = {}
-            if tile_x1 >= 0 and tile_x1 < Heightmap.MAP_SIZE and tile_z1 >= 0 and tile_z1 < Heightmap.MAP_SIZE then
-                table.insert(height_indices, get_pixel_height_index(tile_x1, tile_z1))
-            end
-            if tile_x2 >= 0 and tile_x2 < Heightmap.MAP_SIZE and tile_z1 >= 0 and tile_z1 < Heightmap.MAP_SIZE then
-                table.insert(height_indices, get_pixel_height_index(tile_x2, tile_z1))
-            end
-            if tile_x2 >= 0 and tile_x2 < Heightmap.MAP_SIZE and tile_z2 >= 0 and tile_z2 < Heightmap.MAP_SIZE then
-                table.insert(height_indices, get_pixel_height_index(tile_x2, tile_z2))
-            end
-            if tile_x1 >= 0 and tile_x1 < Heightmap.MAP_SIZE and tile_z2 >= 0 and tile_z2 < Heightmap.MAP_SIZE then
-                table.insert(height_indices, get_pixel_height_index(tile_x1, tile_z2))
-            end
-
-            -- For slopes, use the LOWEST height index; for flat areas, use the height value
-            local height_value = 0
-            if #height_indices > 0 then
-                if is_flat then
-                    height_value = height_indices[1]
-                else
-                    height_value = height_indices[1]
-                    for _, h in ipairs(height_indices) do
-                        if h < height_value then
-                            height_value = h
-                        end
-                    end
-                end
-            end
-
-            -- Choose sprite based on palette index (matching Picotron thresholds)
-            local sprite_id
-            local is_water = (is_flat and height_value == 0)
-
-            if is_water then
-                sprite_id = Constants.SPRITE_WATER
-            elseif height_value >= 10 then
-                sprite_id = Constants.SPRITE_ROCKS
-            elseif height_value >= 3 then
-                sprite_id = Constants.SPRITE_GRASS
-            else
-                sprite_id = Constants.SPRITE_GROUND
-            end
-
-            -- Add faces with UV coordinates
+            -- Add faces with UV coordinates and height indices
             table.insert(faces, {
                 indices = {v1, v2, v3},
-                sprite = sprite_id,
+                height_indices = {hi1, hi2, hi3},
+                is_water = is_water,
                 uvs = {{0, 0}, {1, 0}, {1, 1}}
             })
             table.insert(faces, {
                 indices = {v1, v3, v4},
-                sprite = sprite_id,
+                height_indices = {hi1, hi3, hi4},
+                is_water = is_water,
                 uvs = {{0, 0}, {1, 1}, {0, 1}}
             })
         end
@@ -248,13 +210,13 @@ local function init_texture_cache()
     }
 end
 
--- Pre-allocated batch arrays (reused each frame to avoid GC)
+-- Pre-allocated batch array for water (reused each frame to avoid GC)
 local batch_water = {}
-local batch_grass = {}
-local batch_rocks = {}
-local batch_ground = {}
+local terrain_textures_initialized = false
 
--- Draw terrain using the renderer (batched by texture type)
+-- Draw terrain using the renderer
+-- Land uses terrain shader with height-based texture blending
+-- Water uses regular 3D shader with animated textures
 function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam_yaw)
     render_distance = render_distance or 20
     if not grid_count then
@@ -264,6 +226,16 @@ function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam
 
     -- Initialize texture cache once
     init_texture_cache()
+
+    -- Initialize terrain textures for shader (once)
+    if not terrain_textures_initialized then
+        renderer.setTerrainTextures(
+            cached_textures.ground,
+            cached_textures.grass,
+            cached_textures.rocks
+        )
+        terrain_textures_initialized = true
+    end
 
     -- Snap camera to grid for cache key
     local center_x = floor(cam_x / Heightmap.TILE_SIZE) * Heightmap.TILE_SIZE
@@ -285,75 +257,43 @@ function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam
     local water_frame = floor(love.timer.getTime() * 2) % 2
     local tex_water = water_frame == 0 and cached_textures.water1 or cached_textures.water2
 
-    -- Use cached textures
-    local tex_grass = cached_textures.grass
-    local tex_rocks = cached_textures.rocks
-    local tex_ground = cached_textures.ground
-
-    -- Clear batch arrays (reuse tables, just reset count)
+    -- Clear water batch (reuse table, just reset count)
     local water_count = 0
-    local grass_count = 0
-    local rocks_count = 0
-    local ground_count = 0
 
-    -- Sort faces into batches by texture type
+    -- Process all faces
     for _, face in ipairs(faces) do
         local v1 = verts[face.indices[1]]
         local v2 = verts[face.indices[2]]
         local v3 = verts[face.indices[3]]
 
-        -- Calculate tile center for fog
-        local center_fx = (v1.pos[1] + v2.pos[1] + v3.pos[1]) * 0.333333
-        local center_fz = (v1.pos[3] + v2.pos[3] + v3.pos[3]) * 0.333333
-
-        -- Vector from camera to tile center
-        local dx = center_fx - cam_x
-        local dz = center_fz - cam_z
-        local dist_sq = dx * dx + dz * dz
-        local distance = sqrt(dist_sq)
-        local fogFactor = renderer.calcFogFactor(distance)
-
-        -- Build triangle data
-        local tri = {
-            {pos = v1.pos, uv = face.uvs[1]},
-            {pos = v2.pos, uv = face.uvs[2]},
-            {pos = v3.pos, uv = face.uvs[3]},
-            fogFactor
-        }
-
-        -- Sort into appropriate batch
-        local sprite_id = face.sprite
-        if sprite_id == Constants.SPRITE_WATER or sprite_id == Constants.SPRITE_WATER2 then
+        if face.is_water then
+            -- Water uses regular 3D shader batch
             water_count = water_count + 1
-            batch_water[water_count] = tri
-        elseif sprite_id == Constants.SPRITE_GRASS then
-            grass_count = grass_count + 1
-            batch_grass[grass_count] = tri
-        elseif sprite_id == Constants.SPRITE_ROCKS then
-            rocks_count = rocks_count + 1
-            batch_rocks[rocks_count] = tri
+            batch_water[water_count] = {
+                {pos = v1.pos, uv = face.uvs[1]},
+                {pos = v2.pos, uv = face.uvs[2]},
+                {pos = v3.pos, uv = face.uvs[3]}
+            }
         else
-            ground_count = ground_count + 1
-            batch_ground[ground_count] = tri
+            -- Land uses terrain shader with per-vertex height
+            local hi = face.height_indices
+            renderer.drawTerrainTriangle(
+                {pos = v1.pos, uv = face.uvs[1]},
+                {pos = v2.pos, uv = face.uvs[2]},
+                {pos = v3.pos, uv = face.uvs[3]},
+                hi[1], hi[2], hi[3],
+                1.0  -- brightness
+            )
         end
     end
 
-    -- Trim batch arrays to actual size (for iteration)
+    -- Trim water batch to actual size
     for i = water_count + 1, #batch_water do batch_water[i] = nil end
-    for i = grass_count + 1, #batch_grass do batch_grass[i] = nil end
-    for i = rocks_count + 1, #batch_rocks do batch_rocks[i] = nil end
-    for i = ground_count + 1, #batch_ground do batch_ground[i] = nil end
 
-    -- Draw each batch
-    if ground_count > 0 then
-        renderer.drawTriangleBatch(batch_ground, tex_ground, nil)
-    end
-    if grass_count > 0 then
-        renderer.drawTriangleBatch(batch_grass, tex_grass, nil)
-    end
-    if rocks_count > 0 then
-        renderer.drawTriangleBatch(batch_rocks, tex_rocks, nil)
-    end
+    -- Flush terrain first (land), then draw water on top
+    renderer.flushTerrain()
+
+    -- Draw water using regular 3D shader
     if water_count > 0 then
         renderer.drawTriangleBatch(batch_water, tex_water, nil)
     end

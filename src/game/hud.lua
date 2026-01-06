@@ -2,6 +2,10 @@
 -- Displays hull bar, compass, altimeter, control hints, and mission panel
 -- Renders directly to software renderer buffer for consistent pixel art look
 
+local quat = require("quat")
+local mat4 = require("mat4")
+local config = require("config")
+
 local HUD = {}
 
 -- Configuration (positions for 480x270 render resolution)
@@ -405,6 +409,61 @@ function HUD.draw_repair_indicator(is_repairing)
     end
 end
 
+-- Draw WASD thruster indicator
+-- Projects thruster positions to screen space and draws key letters on top
+function HUD.draw_thruster_indicator(ship)
+    if not ship or not ship.thrusters or not ship.engine_positions then return end
+    if not renderer.worldToScreen then return end  -- Need projection function
+    if not ship.orientation then return end  -- Need ship orientation for rotation
+
+    -- Thruster mapping: 1=Right(D), 2=Left(A), 3=Front(W), 4=Back(S)
+    local thruster_keys = {"D", "A", "W", "S"}
+    local scale = ship.model_scale
+
+    -- Build the same model matrix as Ship:draw uses
+    -- Order: Translation * Rotation * Scale (applied right to left to points)
+    local rotationMatrix = quat.toMatrix(ship.orientation)
+    local modelMatrix = mat4.multiply(rotationMatrix, mat4.scale(scale, scale, scale))
+    modelMatrix = mat4.multiply(mat4.translation(ship.x, ship.y, ship.z), modelMatrix)
+
+    local y_offset = config.THRUSTER_LABEL_Y_OFFSET or 2
+
+    for i, engine in ipairs(ship.engine_positions) do
+        -- Engine position with Y offset to appear above thruster
+        local local_x = engine.x
+        local local_y = engine.y + y_offset
+        local local_z = engine.z
+
+        -- Transform by model matrix (same as ship vertices)
+        local world_pos = mat4.multiplyVec4(modelMatrix, {local_x, local_y, local_z, 1})
+        local world_x = world_pos[1]
+        local world_y = world_pos[2]
+        local world_z = world_pos[3]
+
+        -- Project to screen using full MVP like the shader does
+        -- The shader sends identity modelMatrix, so we just need view * proj
+        local screen_x, screen_y, visible = renderer.worldToScreen(world_x, world_y, world_z)
+
+        if visible and screen_x and screen_y then
+            local is_active = ship.thrusters[i] and ship.thrusters[i].active
+            local key = thruster_keys[i]
+
+            -- Center the letter on the projected position
+            local text_x = math.floor(screen_x - 2)
+            local text_y = math.floor(screen_y - 3)
+
+            -- Draw drop shadow (black, offset by 1 pixel)
+            renderer.drawText(text_x + 1, text_y + 1, key,
+                              COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
+
+            -- Draw key letter (white when inactive, red when active)
+            local text_color = is_active and COLOR_RED or COLOR_WHITE
+            renderer.drawText(text_x, text_y, key,
+                              text_color[1], text_color[2], text_color[3], 1, false)
+        end
+    end
+end
+
 -- Main draw function - draws all HUD elements to software renderer
 function HUD.draw(ship, camera, opts)
     if not renderer then
@@ -433,6 +492,9 @@ function HUD.draw(ship, camera, opts)
 
     -- Draw repair indicator
     HUD.draw_repair_indicator(opts.is_repairing)
+
+    -- Draw thruster indicator (WASD keys showing which thrusters are firing)
+    HUD.draw_thruster_indicator(ship)
 
     -- Draw pause menu on top of everything
     HUD.draw_pause_menu()
