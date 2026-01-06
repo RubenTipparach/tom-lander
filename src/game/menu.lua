@@ -3,7 +3,7 @@
 local menu = {}
 local scene_manager = require("scene_manager")
 local config = require("config")
-local renderer = require("renderer_dda")
+local renderer = require("renderer")
 local camera_module = require("camera")
 local mat4 = require("mat4")
 local quat = require("quat")
@@ -396,8 +396,12 @@ function menu.load()
     -- Only initialize 3D rendering if enabled in config
     if config.MENU_3D_ENABLED then
         -- Renderer already initialized in main.lua
-        softwareImage = love.graphics.newImage(renderer.getImageData())
-        softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
+        -- softwareImage only needed for DDA renderer (GPU renderer handles its own presentation)
+        local imageData = renderer.getImageData()
+        if imageData then
+            softwareImage = love.graphics.newImage(imageData)
+            softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
+        end
 
         -- Create projection matrix
         local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
@@ -773,11 +777,8 @@ function menu.draw()
             menu.draw_title()
         end
 
-        -- Update and display software rendered image
-        softwareImage:replacePixels(renderer.getImageData())
-
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
+        -- Present the rendered frame to screen
+        renderer.present()
     end
 
     -- Draw logo on top (Love2D image, drawn after software render) - only on title screen

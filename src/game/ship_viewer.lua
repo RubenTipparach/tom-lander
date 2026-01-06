@@ -2,7 +2,7 @@
 local ship_viewer = {}
 
 local config = require("config")
-local renderer = require("renderer_dda")
+local renderer = require("renderer")
 local camera_module = require("camera")
 local mat4 = require("mat4")
 local obj_loader = require("obj_loader")
@@ -21,7 +21,11 @@ function ship_viewer.load()
 
     -- Initialize renderer
     renderer.init(config.RENDER_WIDTH, config.RENDER_HEIGHT)
-    softwareImage = love.graphics.newImage(renderer.getImageData())
+    -- softwareImage only needed for DDA renderer (GPU renderer handles its own presentation)
+    local imageData = renderer.getImageData()
+    if imageData then
+        softwareImage = love.graphics.newImage(imageData)
+    end
 
     -- Create projection matrix
     local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
@@ -171,13 +175,8 @@ function ship_viewer.draw()
         trisDrawn = trisDrawn + 1
     end
 
-    -- Update and draw the software rendered image
-    softwareImage:replacePixels(renderer.getImageData())
-
-    local scaleX = config.WINDOW_WIDTH / config.RENDER_WIDTH
-    local scaleY = config.WINDOW_HEIGHT / config.RENDER_HEIGHT
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(softwareImage, 0, 0, 0, scaleX, scaleY)
+    -- Present the rendered frame to screen
+    renderer.present()
 
     -- Draw debug info
     love.graphics.setColor(1, 1, 0)

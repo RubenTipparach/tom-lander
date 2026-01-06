@@ -4,6 +4,11 @@
 local config = {}
 
 -- ===========================================
+-- RENDERER SETTINGS
+-- ===========================================
+config.USE_GPU_RENDERER = true  -- Set to true for GPU shaders, false for software DDA renderer
+
+-- ===========================================
 -- MENU SETTINGS
 -- ===========================================
 config.MENU_3D_ENABLED = true  -- Set to true to enable 3D menu background (planet, ship, starfield)

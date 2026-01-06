@@ -693,6 +693,22 @@ local function drawClippedTriangle(p1, p2, p3, v1, v2, v3, texture, texData, bri
     renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fogFactor)
 end
 
+-- Pre-allocated buffers for single triangle drawing (drawTriangle3D)
+local singleP1 = {0, 0, 0, 0}
+local singleP2 = {0, 0, 0, 0}
+local singleP3 = {0, 0, 0, 0}
+local singleVA = {0, 0, 0, 0, 0, 0}
+local singleVB = {0, 0, 0, 0, 0, 0}
+local singleVC = {0, 0, 0, 0, 0, 0}
+
+-- Inline MVP transform for single triangles (avoids function call overhead)
+local function transformVertex(mvp, x, y, z, out)
+    out[1] = mvp[1] * x + mvp[2] * y + mvp[3] * z + mvp[4]
+    out[2] = mvp[5] * x + mvp[6] * y + mvp[7] * z + mvp[8]
+    out[3] = mvp[9] * x + mvp[10] * y + mvp[11] * z + mvp[12]
+    out[4] = mvp[13] * x + mvp[14] * y + mvp[15] * z + mvp[16]
+end
+
 -- Draw a triangle in 3D world space
 -- v1, v2, v3 are tables with {pos = {x,y,z}, uv = {u,v}, brightness = 0-1 (optional)}
 -- brightness is optional per-vertex lighting multiplier
@@ -704,108 +720,86 @@ function renderer_dda.drawTriangle3D(v1, v2, v3, texture, texData, brightness, f
         error("Must call renderer_dda.setMatrices() before drawTriangle3D()")
     end
 
-    -- Early backface culling in world space (DISABLED - causes issues)
-    -- TODO: Fix world-space backface culling math
-    -- local edge1x = v2.pos[1] - v1.pos[1]
-    -- local edge1y = v2.pos[2] - v1.pos[2]
-    -- local edge1z = v2.pos[3] - v1.pos[3]
-    -- local edge2x = v3.pos[1] - v1.pos[1]
-    -- local edge2y = v3.pos[2] - v1.pos[2]
-    -- local edge2z = v3.pos[3] - v1.pos[3]
+    local mvp = currentMVP
+    local nearPlane = 0.01
+    local halfW = RENDER_WIDTH * 0.5
+    local halfH = RENDER_HEIGHT * 0.5
 
-    -- -- Calculate face normal via cross product
-    -- local nx = edge1y * edge2z - edge1z * edge2y
-    -- local ny = edge1z * edge2x - edge1x * edge2z
-    -- local nz = edge1x * edge2y - edge1y * edge2x
+    -- Transform to clip space using pre-allocated tables (zero allocation)
+    local p1x, p1y, p1z = v1.pos[1], v1.pos[2], v1.pos[3]
+    local p2x, p2y, p2z = v2.pos[1], v2.pos[2], v2.pos[3]
+    local p3x, p3y, p3z = v3.pos[1], v3.pos[2], v3.pos[3]
 
-    -- -- View direction from camera to triangle
-    -- local centerX = (v1.pos[1] + v2.pos[1] + v3.pos[1]) / 3
-    -- local centerY = (v1.pos[2] + v2.pos[2] + v3.pos[2]) / 3
-    -- local centerZ = (v1.pos[3] + v2.pos[3] + v3.pos[3]) / 3
-
-    -- if currentCamera then
-    --     local viewX = currentCamera.x - centerX
-    --     local viewY = currentCamera.y - centerY
-    --     local viewZ = currentCamera.z - centerZ
-
-    --     -- Dot product - if negative, backface (normal points away from camera)
-    --     local dot = nx * viewX + ny * viewY + nz * viewZ
-    --     if dot < 0 then
-    --         return
-    --     end
-    -- end
-
-    -- Transform to clip space
-    local p1 = mat4.multiplyVec4(currentMVP, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
-    local p2 = mat4.multiplyVec4(currentMVP, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
-    local p3 = mat4.multiplyVec4(currentMVP, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
+    transformVertex(mvp, p1x, p1y, p1z, singleP1)
+    transformVertex(mvp, p2x, p2y, p2z, singleP2)
+    transformVertex(mvp, p3x, p3y, p3z, singleP3)
 
     -- Near plane clipping
-    local nearPlane = 0.01
-    local n1 = p1[4] <= nearPlane
-    local n2 = p2[4] <= nearPlane
-    local n3 = p3[4] <= nearPlane
+    local w1, w2, w3 = singleP1[4], singleP2[4], singleP3[4]
+    local n1 = w1 <= nearPlane
+    local n2 = w2 <= nearPlane
+    local n3 = w3 <= nearPlane
 
     -- All vertices behind - cull entire triangle
     if n1 and n2 and n3 then
         return
     end
 
-    -- All vertices in front - no clipping needed, continue as normal
-    if not (n1 or n2 or n3) then
-        -- Continue to projection below
-    else
-        -- Partial clipping - split triangle
+    -- Handle clipping case (rare - fall back to allocation path)
+    if n1 or n2 or n3 then
+        -- Need to create tables for clipping (unavoidable for edge cases)
+        local p1 = {singleP1[1], singleP1[2], singleP1[3], singleP1[4]}
+        local p2 = {singleP2[1], singleP2[2], singleP2[3], singleP2[4]}
+        local p3 = {singleP3[1], singleP3[2], singleP3[3], singleP3[4]}
         local clippedTriangles = clipTriangleNearPlane(p1, p2, p3, v1, v2, v3, n1, n2, n3, nearPlane)
-
-        -- Recursively draw clipped triangles
         for _, tri in ipairs(clippedTriangles) do
-            -- tri contains {p1, p2, p3, v1, v2, v3} already in clip space
             drawClippedTriangle(tri[1], tri[2], tri[3], tri[4], tri[5], tri[6], texture, texData, brightness, fogFactor)
         end
         return
     end
 
-    -- Project to screen space
-    local s1x = (p1[1] / p1[4] + 1) * RENDER_WIDTH * 0.5
-    local s1y = (1 - p1[2] / p1[4]) * RENDER_HEIGHT * 0.5
-    local s2x = (p2[1] / p2[4] + 1) * RENDER_WIDTH * 0.5
-    local s2y = (1 - p2[2] / p2[4]) * RENDER_HEIGHT * 0.5
-    local s3x = (p3[1] / p3[4] + 1) * RENDER_WIDTH * 0.5
-    local s3y = (1 - p3[2] / p3[4]) * RENDER_HEIGHT * 0.5
+    -- Project to screen space (inline, no allocations)
+    local invW1 = 1 / w1
+    local invW2 = 1 / w2
+    local invW3 = 1 / w3
 
-    -- Perspective-correct attributes
-    local w1 = 1 / p1[4]
-    local w2 = 1 / p2[4]
-    local w3 = 1 / p3[4]
+    local s1x = (singleP1[1] * invW1 + 1) * halfW
+    local s1y = (1 - singleP1[2] * invW1) * halfH
+    local s2x = (singleP2[1] * invW2 + 1) * halfW
+    local s2y = (1 - singleP2[2] * invW2) * halfH
+    local s3x = (singleP3[1] * invW3 + 1) * halfW
+    local s3y = (1 - singleP3[2] * invW3) * halfH
 
     -- Get texture dimensions
     local texW = texData:getWidth()
     local texH = texData:getHeight()
 
-    local vA = {
-        s1x, s1y,
-        w1,
-        v1.uv[1] * texW * w1, v1.uv[2] * texH * w1,
-        p1[3] / p1[4]
-    }
-    local vB = {
-        s2x, s2y,
-        w2,
-        v2.uv[1] * texW * w2, v2.uv[2] * texH * w2,
-        p2[3] / p2[4]
-    }
-    local vC = {
-        s3x, s3y,
-        w3,
-        v3.uv[1] * texW * w3, v3.uv[2] * texH * w3,
-        p3[3] / p3[4]
-    }
+    -- Build screen-space vertices using pre-allocated tables
+    singleVA[1] = s1x
+    singleVA[2] = s1y
+    singleVA[3] = invW1
+    singleVA[4] = v1.uv[1] * texW * invW1
+    singleVA[5] = v1.uv[2] * texH * invW1
+    singleVA[6] = singleP1[3] * invW1
+
+    singleVB[1] = s2x
+    singleVB[2] = s2y
+    singleVB[3] = invW2
+    singleVB[4] = v2.uv[1] * texW * invW2
+    singleVB[5] = v2.uv[2] * texH * invW2
+    singleVB[6] = singleP2[3] * invW2
+
+    singleVC[1] = s3x
+    singleVC[2] = s3y
+    singleVC[3] = invW3
+    singleVC[4] = v3.uv[1] * texW * invW3
+    singleVC[5] = v3.uv[2] * texH * invW3
+    singleVC[6] = singleP3[3] * invW3
 
     local t1 = getTime()
     stats.timeTransform = stats.timeTransform + (t1 - t0)
 
-    renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fogFactor)
+    renderer_dda.drawTriangle(singleVA, singleVB, singleVC, texture, texData, brightness, fogFactor)
 
     stats.timeRasterize = stats.timeRasterize + (getTime() - t1)
 end
@@ -817,14 +811,6 @@ local batchP3 = {0, 0, 0, 0}
 local batchVA = {0, 0, 0, 0, 0, 0}
 local batchVB = {0, 0, 0, 0, 0, 0}
 local batchVC = {0, 0, 0, 0, 0, 0}
-
--- Inline MVP transform (avoids function call and table creation)
-local function transformVertex(mvp, x, y, z, out)
-    out[1] = mvp[1] * x + mvp[2] * y + mvp[3] * z + mvp[4]
-    out[2] = mvp[5] * x + mvp[6] * y + mvp[7] * z + mvp[8]
-    out[3] = mvp[9] * x + mvp[10] * y + mvp[11] * z + mvp[12]
-    out[4] = mvp[13] * x + mvp[14] * y + mvp[15] * z + mvp[16]
-end
 
 -- Draw multiple triangles with the same texture (optimized for terrain/batches)
 -- triangles: array of {v1, v2, v3, fogFactor} where v1/v2/v3 are {pos={x,y,z}, uv={u,v}}
@@ -1349,6 +1335,37 @@ function renderer_dda.drawText(x, y, text, r, g, b, scale, shadow)
     end
 
     return cursorX - x  -- Return total width
+end
+
+-- Cached software image for presentation
+local softwareImage = nil
+
+-- Present the rendered frame to screen (matches GPU renderer API)
+function renderer_dda.present()
+    -- Create software image on first use
+    if not softwareImage then
+        softwareImage = love.graphics.newImage(softwareImageData)
+        softwareImage:setFilter("nearest", "nearest")
+    end
+
+    -- Update the image with current framebuffer data
+    softwareImage:replacePixels(softwareImageData)
+
+    -- Calculate scaling to fit window while maintaining aspect ratio
+    local windowW = love.graphics.getWidth()
+    local windowH = love.graphics.getHeight()
+    local scaleX = windowW / RENDER_WIDTH
+    local scaleY = windowH / RENDER_HEIGHT
+    local scale = math.min(scaleX, scaleY)
+
+    -- Center the image
+    local offsetX = (windowW - RENDER_WIDTH * scale) / 2
+    local offsetY = (windowH - RENDER_HEIGHT * scale) / 2
+
+    -- Clear and draw
+    love.graphics.clear(0, 0, 0, 1)
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
 end
 
 return renderer_dda

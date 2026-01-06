@@ -143,7 +143,7 @@ local function display_profiles()
 
     -- Draw renderer stats
     y = y + 16
-    local renderer = require("renderer_dda")
+    local renderer = require("renderer")
     local stats = renderer.getStats()
 
     -- Triangle and pixel counts

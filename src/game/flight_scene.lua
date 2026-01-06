@@ -2,7 +2,7 @@
 -- Camera and controls ported from Picotron version
 
 local config = require("config")
-local renderer = require("renderer_dda")
+local renderer = require("renderer")
 local camera_module = require("camera")
 local mat4 = require("mat4")
 local vec3 = require("vec3")
@@ -28,7 +28,7 @@ local ship
 local cam
 local smoke_system
 local speed_lines
-local softwareImage
+local softwareImage  -- Only used by software renderer, unused with GPU renderer
 local projMatrix
 local follow_camera = true
 
@@ -50,8 +50,12 @@ local thrusterFont = nil
 
 function flight_scene.load()
     -- Renderer already initialized in main.lua
-    softwareImage = love.graphics.newImage(renderer.getImageData())
-    softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
+    -- softwareImage only needed for DDA renderer (GPU renderer handles its own presentation)
+    local imageData = renderer.getImageData()
+    if imageData then
+        softwareImage = love.graphics.newImage(imageData)
+        softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
+    end
 
     -- Create projection matrix
     local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
@@ -467,28 +471,9 @@ function flight_scene.draw()
     })
     profile(" hud")
 
-    profile("blit")
-    -- Update and draw the software rendered image
-    softwareImage:replacePixels(renderer.getImageData())
-    profile("blit")
-
     profile("present")
-    -- Get actual window size for dynamic scaling
-    local windowWidth, windowHeight = love.graphics.getDimensions()
-
-    -- Calculate scale maintaining aspect ratio
-    local scaleX = windowWidth / config.RENDER_WIDTH
-    local scaleY = windowHeight / config.RENDER_HEIGHT
-    local scale = math.min(scaleX, scaleY)
-
-    -- Calculate offset to center the image
-    local offsetX = (windowWidth - config.RENDER_WIDTH * scale) / 2
-    local offsetY = (windowHeight - config.RENDER_HEIGHT * scale) / 2
-
-    -- Clear to black for letterboxing
-    love.graphics.clear(0, 0, 0, 1)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(softwareImage, offsetX, offsetY, 0, scale, scale)
+    -- Present the rendered frame to screen
+    renderer.present()
     profile("present")
 end
 

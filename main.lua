@@ -1,7 +1,7 @@
 -- Main entry point with scene manager
 local scene_manager = require("scene_manager")
 local config = require("config")
-local renderer = require("renderer_dda")
+local renderer = require("renderer")
 local profile = require("profiler")
 
 -- Frame rate tracking

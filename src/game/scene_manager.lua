@@ -1,6 +1,6 @@
 -- Simple Scene Manager
 local scene_manager = {}
-local renderer = require("renderer_dda")
+local renderer = require("renderer")
 local jit = require("jit")
 
 local currentScene = nil
