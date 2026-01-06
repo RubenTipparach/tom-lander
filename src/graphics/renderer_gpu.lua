@@ -147,6 +147,9 @@ local clipPos1 = {0, 0, 0, 0}
 local clipPos2 = {0, 0, 0, 0}
 local clipPos3 = {0, 0, 0, 0}
 
+-- Near plane for clipping
+local NEAR_CLIP = 0.1
+
 -- Transform vertex to clip space, then to screen space
 local function transformToScreen(mvp, x, y, z, out)
     -- MVP * vertex (row-major matrix multiplication)
@@ -154,6 +157,13 @@ local function transformToScreen(mvp, x, y, z, out)
     out[2] = mvp[5] * x + mvp[6] * y + mvp[7] * z + mvp[8]
     out[3] = mvp[9] * x + mvp[10] * y + mvp[11] * z + mvp[12]
     out[4] = mvp[13] * x + mvp[14] * y + mvp[15] * z + mvp[16]
+end
+
+-- Simple near-plane culling (reject triangles with any vertex behind camera)
+-- More robust than clipping - avoids generating bad geometry
+local function shouldCullTriangle(w1, w2, w3)
+    -- Cull if ANY vertex is behind near plane (conservative but safe)
+    return w1 < NEAR_CLIP or w2 < NEAR_CLIP or w3 < NEAR_CLIP
 end
 
 -- Draw a single 3D triangle (immediate mode - less efficient than batching)
@@ -169,10 +179,9 @@ function renderer_gpu.drawTriangle3D(v1, v2, v3, texture, texData, brightness, f
     transformToScreen(currentMVP, v2.pos[1], v2.pos[2], v2.pos[3], clipPos2)
     transformToScreen(currentMVP, v3.pos[1], v3.pos[2], v3.pos[3], clipPos3)
 
-    -- Near plane clipping (simple reject if all behind)
-    local nearPlane = 0.01
-    if clipPos1[4] <= nearPlane and clipPos2[4] <= nearPlane and clipPos3[4] <= nearPlane then
-        return  -- All vertices behind camera
+    -- Cull if ANY vertex is behind near plane (prevents bad geometry)
+    if shouldCullTriangle(clipPos1[4], clipPos2[4], clipPos3[4]) then
+        return
     end
 
     -- Perspective divide and screen space conversion
@@ -277,10 +286,9 @@ function renderer_gpu.drawTriangleBatch(triangles, texData, brightness)
     local bright = brightness or 1.0
     local halfW = RENDER_WIDTH * 0.5
     local halfH = RENDER_HEIGHT * 0.5
-    local nearPlane = 0.01
     local mvp = currentMVP
 
-    -- Build all vertices in screen space
+    -- Build all vertices in screen space with near-plane culling
     local vertices = {}
     local triCount = 0
     for _, tri in ipairs(triangles) do
@@ -306,8 +314,8 @@ function renderer_gpu.drawTriangleBatch(triangles, texData, brightness)
         local c3z = mvp[9] * p3x + mvp[10] * p3y + mvp[11] * p3z + mvp[12]
         local c3w = mvp[13] * p3x + mvp[14] * p3y + mvp[15] * p3z + mvp[16]
 
-        -- Skip if all behind near plane
-        if c1w > nearPlane or c2w > nearPlane or c3w > nearPlane then
+        -- Cull triangles with any vertex behind near plane
+        if not shouldCullTriangle(c1w, c2w, c3w) then
             -- Perspective divide and screen conversion
             local invW1 = 1 / c1w
             local invW2 = 1 / c2w
@@ -396,46 +404,58 @@ function renderer_gpu.drawLine3D(p0, p1, r, g, b, skipZBuffer)
     love.graphics.setColor(1, 1, 1, 1)
 end
 
--- Draw a 2D line (screen space)
+-- Draw a 2D line (screen space) - disable depth for UI
 function renderer_gpu.drawLine2D(x0, y0, x1, y1, r, g, b)
+    love.graphics.setDepthMode()  -- Disable depth for 2D
     love.graphics.setColor(r/255, g/255, b/255, 1)
     love.graphics.line(x0, y0, x1, y1)
     love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setDepthMode("less", true)  -- Re-enable for 3D
 end
 
 -- Draw a pixel
 function renderer_gpu.drawPixel(x, y, r, g, b)
+    love.graphics.setDepthMode()  -- Disable depth for 2D
     love.graphics.setColor(r/255, g/255, b/255, 1)
     love.graphics.points(math.floor(x) + 0.5, math.floor(y) + 0.5)
     love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setDepthMode("less", true)
 end
 
 -- Draw filled rectangle
 function renderer_gpu.drawRectFill(x1, y1, x2, y2, r, g, b, alpha)
+    love.graphics.setDepthMode()  -- Disable depth for 2D
     love.graphics.setColor(r/255, g/255, b/255, (alpha or 255)/255)
     love.graphics.rectangle("fill", x1, y1, x2 - x1, y2 - y1)
     love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setDepthMode("less", true)
 end
 
 -- Draw rectangle outline
 function renderer_gpu.drawRect(x1, y1, x2, y2, r, g, b)
+    love.graphics.setDepthMode()  -- Disable depth for 2D
     love.graphics.setColor(r/255, g/255, b/255, 1)
     love.graphics.rectangle("line", x1, y1, x2 - x1, y2 - y1)
     love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setDepthMode("less", true)
 end
 
 -- Draw filled circle
 function renderer_gpu.drawCircleFill(cx, cy, radius, r, g, b)
+    love.graphics.setDepthMode()  -- Disable depth for 2D
     love.graphics.setColor(r/255, g/255, b/255, 1)
     love.graphics.circle("fill", cx, cy, radius)
     love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setDepthMode("less", true)
 end
 
 -- Draw circle outline
 function renderer_gpu.drawCircle(cx, cy, radius, r, g, b)
+    love.graphics.setDepthMode()  -- Disable depth for 2D
     love.graphics.setColor(r/255, g/255, b/255, 1)
     love.graphics.circle("line", cx, cy, radius)
     love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setDepthMode("less", true)
 end
 
 -- Simple 4x5 bitmap font (copied from software renderer)
@@ -506,6 +526,7 @@ end
 
 -- Draw text with drop shadow
 function renderer_gpu.drawText(x, y, text, r, g, b, scale, shadow)
+    love.graphics.setDepthMode()  -- Disable depth for 2D text
     scale = scale or 1
     if shadow == nil then shadow = true end
 
@@ -526,6 +547,7 @@ function renderer_gpu.drawText(x, y, text, r, g, b, scale, shadow)
         cursorX = cursorX + drawCharGPU(text:sub(i,i), cursorX, y, r, g, b, scale)
     end
 
+    love.graphics.setDepthMode("less", true)  -- Re-enable for 3D
     return cursorX - x
 end
 
