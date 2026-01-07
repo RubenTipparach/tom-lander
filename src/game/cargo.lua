@@ -213,12 +213,24 @@ function Cargo.draw(cargo, renderer, cam_x, cam_z)
         local p2 = mat4.multiplyVec4(modelMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
         local p3 = mat4.multiplyVec4(modelMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
+        -- Calculate lighting if enabled
+        local brightness = 1.0
+        if config.GOURAUD_SHADING and renderer.calculateFaceNormal and renderer.calculateVertexBrightness then
+            local nx, ny, nz = renderer.calculateFaceNormal(
+                {p1[1], p1[2], p1[3]},
+                {p2[1], p2[2], p2[3]},
+                {p3[1], p3[2], p3[3]}
+            )
+            brightness = renderer.calculateVertexBrightness(nx, ny, nz)
+        end
+
         renderer.drawTriangle3D(
             {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
             {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
             {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
             nil,
-            texData
+            texData,
+            brightness
         )
     end
 end

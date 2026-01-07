@@ -343,31 +343,28 @@ function Ship:draw(renderer, texData)
         shipTexData = Constants.getTextureData(Constants.SPRITE_SHIP_DAMAGE) or shipTexData
     end
 
-    -- Draw ship triangles
-    for _, tri in ipairs(self.mesh.triangles) do
-        local v1 = self.mesh.vertices[tri[1]]
-        local v2 = self.mesh.vertices[tri[2]]
-        local v3 = self.mesh.vertices[tri[3]]
+    -- Use Gouraud or flat shading based on config
+    if gameConfig.GOURAUD_SHADING and renderer.drawMeshGouraud then
+        renderer.drawMeshGouraud(self.mesh, modelMatrix, shipTexData, mat4)
+    elseif renderer.drawMeshFlat then
+        renderer.drawMeshFlat(self.mesh, modelMatrix, shipTexData, mat4)
+    else
+        -- Fallback: draw without lighting
+        for _, tri in ipairs(self.mesh.triangles) do
+            local v1 = self.mesh.vertices[tri[1]]
+            local v2 = self.mesh.vertices[tri[2]]
+            local v3 = self.mesh.vertices[tri[3]]
 
-        local p1 = mat4.multiplyVec4(modelMatrix, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
-        local p2 = mat4.multiplyVec4(modelMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
-        local p3 = mat4.multiplyVec4(modelMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
+            local p1 = mat4.multiplyVec4(modelMatrix, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
+            local p2 = mat4.multiplyVec4(modelMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
+            local p3 = mat4.multiplyVec4(modelMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
-        if shipTexData then
             renderer.drawTriangle3D(
                 {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
                 {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
                 {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
                 nil,
                 shipTexData
-            )
-        else
-            renderer.drawTriangle3D(
-                {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
-                {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
-                {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
-                {1, 1, 1},
-                nil
             )
         end
     end
@@ -419,14 +416,15 @@ function Ship:draw_flames(renderer, shipModelMatrix)
                 local p2 = mat4.multiplyVec4(flameMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
                 local p3 = mat4.multiplyVec4(flameMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
-                -- 50% dithering for flame transparency effect
+                -- Flames are emissive (configurable brightness and transparency)
                 renderer.drawTriangle3D(
                     {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
                     {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
                     {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
                     nil,
                     flameTexData,
-                    0.5  -- 50% dithering
+                    gameConfig.FLAME_BRIGHTNESS or 1.0,
+                    gameConfig.FLAME_ALPHA or 0.5
                 )
             end
         end

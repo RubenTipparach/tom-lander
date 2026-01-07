@@ -7,6 +7,16 @@ local config = {}
 -- RENDERER SETTINGS
 -- ===========================================
 config.USE_GPU_RENDERER = true  -- Set to true for GPU shaders, false for software DDA renderer
+config.GOURAUD_SHADING = true   -- Set to true for per-vertex lighting (smooth), false for flat shading
+
+-- ===========================================
+-- LIGHTING SETTINGS (Gouraud shading)
+-- ===========================================
+-- Light direction: 60° up from East horizon
+-- East = +X, 60° elevation: X = cos(60°) = 0.5, Y = -sin(60°) = -0.866, Z = 0
+config.LIGHT_DIRECTION = {-0.866, 0.5, 0.0}  -- Directional light from 60° up, East (normalized automatically)
+config.LIGHT_INTENSITY = 1.0               -- Directional light brightness (0-1)
+config.AMBIENT_LIGHT = 0.55                -- Ambient light level (0-1)
 
 -- ===========================================
 -- MENU SETTINGS
@@ -18,6 +28,7 @@ config.SET_CLEAR_COLOR = false  -- Set to true to call setClearColor in flight_s
 -- DEBUG / DEV SETTINGS
 -- ===========================================
 config.UNLOCK_ALL_MISSIONS = true  -- Set to true to unlock all missions (dev mode)
+config.COMBAT_DEBUG = true         -- Set to true to show combat debug visuals (bounding boxes, velocity, target lines)
 
 -- ===========================================
 -- RENDER SETTINGS
@@ -81,6 +92,12 @@ config.VTOL_TORQUE_ROLL = 0.002     -- Torque around Z axis (roll)
 config.VTOL_GRAVITY = -0.005         -- Gravity force
 config.VTOL_DAMPING = 0.95           -- Linear velocity damping
 config.VTOL_ANGULAR_DAMPING = 0.95   -- Angular velocity damping
+
+-- ===========================================
+-- THRUSTER FLAME SETTINGS
+-- ===========================================
+config.FLAME_BRIGHTNESS = 1.0        -- Flame brightness (1.0 = emissive, no shading)
+config.FLAME_ALPHA = 0.5             -- Flame transparency (0-1, 0.5 = 50% transparent)
 
 -- ===========================================
 -- GUIDE ARROW SETTINGS

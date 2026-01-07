@@ -266,20 +266,37 @@ local function getImage(texData)
 end
 
 -- Add triangle vertices to batch (world space - GPU will transform)
-local function addTriangleToBatch(batch, v1, v2, v3, bright)
+local function addTriangleToBatch(batch, v1, v2, v3, bright, alpha)
     local verts = batch.vertices
     local idx = batch.count * 3
+    local a = alpha or 1.0
 
     -- Store world-space positions with w=1.0 for proper matrix math
     -- Format: {x, y, z, w, u, v, r, g, b, a}
-    verts[idx + 1] = {v1.pos[1], v1.pos[2], v1.pos[3], 1.0, v1.uv[1], v1.uv[2], 1, 1, 1, bright}
-    verts[idx + 2] = {v2.pos[1], v2.pos[2], v2.pos[3], 1.0, v2.uv[1], v2.uv[2], 1, 1, 1, bright}
-    verts[idx + 3] = {v3.pos[1], v3.pos[2], v3.pos[3], 1.0, v3.uv[1], v3.uv[2], 1, 1, 1, bright}
+    -- Brightness goes in RGB, alpha for transparency
+    verts[idx + 1] = {v1.pos[1], v1.pos[2], v1.pos[3], 1.0, v1.uv[1], v1.uv[2], bright, bright, bright, a}
+    verts[idx + 2] = {v2.pos[1], v2.pos[2], v2.pos[3], 1.0, v2.uv[1], v2.uv[2], bright, bright, bright, a}
+    verts[idx + 3] = {v3.pos[1], v3.pos[2], v3.pos[3], 1.0, v3.uv[1], v3.uv[2], bright, bright, bright, a}
+    batch.count = batch.count + 1
+end
+
+-- Add triangle with per-vertex brightness (Gouraud shading)
+local function addTriangleToBatchGouraud(batch, v1, v2, v3, b1, b2, b3)
+    local verts = batch.vertices
+    local idx = batch.count * 3
+
+    -- Store world-space positions with per-vertex brightness
+    -- Format: {x, y, z, w, u, v, r, g, b, a}
+    verts[idx + 1] = {v1.pos[1], v1.pos[2], v1.pos[3], 1.0, v1.uv[1], v1.uv[2], b1, b1, b1, 1.0}
+    verts[idx + 2] = {v2.pos[1], v2.pos[2], v2.pos[3], 1.0, v2.uv[1], v2.uv[2], b2, b2, b2, 1.0}
+    verts[idx + 3] = {v3.pos[1], v3.pos[2], v3.pos[3], 1.0, v3.uv[1], v3.uv[2], b3, b3, b3, 1.0}
     batch.count = batch.count + 1
 end
 
 -- Draw a single 3D triangle (adds to batch)
-function renderer_gpu.drawTriangle3D(v1, v2, v3, texture, texData, brightness, fogFactor)
+-- brightness: lighting intensity (0-1), default 1.0
+-- alpha: transparency (0-1), default 1.0 (opaque)
+function renderer_gpu.drawTriangle3D(v1, v2, v3, texture, texData, brightness, alpha)
     if not currentProjectionMatrix then
         error("Must call renderer_gpu.setMatrices() before drawTriangle3D()")
     end
@@ -288,7 +305,21 @@ function renderer_gpu.drawTriangle3D(v1, v2, v3, texture, texData, brightness, f
     local batch = getBatch(image)
     local bright = brightness or 1.0
 
-    addTriangleToBatch(batch, v1, v2, v3, bright)
+    addTriangleToBatch(batch, v1, v2, v3, bright, alpha)
+    stats.trianglesDrawn = stats.trianglesDrawn + 1
+end
+
+-- Draw a single 3D triangle with per-vertex brightness (Gouraud shading)
+-- b1, b2, b3 are brightness values for each vertex (0-1)
+function renderer_gpu.drawTriangle3DGouraud(v1, v2, v3, texData, b1, b2, b3)
+    if not currentProjectionMatrix then
+        error("Must call renderer_gpu.setMatrices() before drawTriangle3DGouraud()")
+    end
+
+    local image = getImage(texData)
+    local batch = getBatch(image)
+
+    addTriangleToBatchGouraud(batch, v1, v2, v3, b1, b2, b3)
     stats.trianglesDrawn = stats.trianglesDrawn + 1
 end
 
@@ -876,6 +907,204 @@ function renderer_gpu.drawBillboard(x, y, z, size, texData)
     -- Draw as two triangles
     renderer_gpu.drawTriangle3D(v1, v2, v3, nil, texData)
     renderer_gpu.drawTriangle3D(v1, v3, v4, nil, texData)
+end
+
+-- ===========================================
+-- GOURAUD SHADING / DIRECTIONAL LIGHTING
+-- ===========================================
+
+-- Normalized light direction (computed once when set)
+local lightDir = {0, -1, 0}  -- Default: straight down
+local lightIntensity = 0.8
+local ambientLight = 0.3
+
+-- Set directional light parameters
+function renderer_gpu.setDirectionalLight(dx, dy, dz, intensity, ambient)
+    -- Normalize light direction
+    local len = math.sqrt(dx*dx + dy*dy + dz*dz)
+    if len > 0.001 then
+        lightDir[1] = dx / len
+        lightDir[2] = dy / len
+        lightDir[3] = dz / len
+    end
+    lightIntensity = intensity or 0.8
+    ambientLight = ambient or 0.3
+end
+
+-- Get current light settings
+function renderer_gpu.getLightSettings()
+    return lightDir, lightIntensity, ambientLight
+end
+
+-- Calculate vertex brightness from normal using directional light (Gouraud shading)
+-- Normal should be normalized and in world space
+function renderer_gpu.calculateVertexBrightness(nx, ny, nz)
+    -- Lambertian diffuse: dot(normal, -lightDir) clamped to 0
+    -- We negate lightDir because we want the direction TO the light
+    local dot = -(nx * lightDir[1] + ny * lightDir[2] + nz * lightDir[3])
+    local diffuse = math.max(0, dot) * lightIntensity
+
+    -- Combine ambient + diffuse, clamp to 0-1
+    return math.min(1.0, ambientLight + diffuse)
+end
+
+-- Calculate face normal from three world-space vertex positions
+-- Returns normalized normal vector (nx, ny, nz)
+function renderer_gpu.calculateFaceNormal(p1, p2, p3)
+    -- Two edge vectors
+    local e1x = p2[1] - p1[1]
+    local e1y = p2[2] - p1[2]
+    local e1z = p2[3] - p1[3]
+
+    local e2x = p3[1] - p1[1]
+    local e2y = p3[2] - p1[2]
+    local e2z = p3[3] - p1[3]
+
+    -- Cross product: e1 × e2
+    local nx = e1y * e2z - e1z * e2y
+    local ny = e1z * e2x - e1x * e2z
+    local nz = e1x * e2y - e1y * e2x
+
+    -- Normalize
+    local len = math.sqrt(nx*nx + ny*ny + nz*nz)
+    if len > 0.0001 then
+        return nx / len, ny / len, nz / len
+    end
+
+    return 0, 1, 0  -- Default upward normal
+end
+
+-- Draw a mesh with Gouraud shading (per-vertex lighting)
+-- meshData: {vertices = {{pos={x,y,z}, uv={u,v}}, ...}, triangles = {{v1,v2,v3}, ...}}
+-- modelMatrix: 4x4 transformation matrix
+-- texData: texture ImageData
+-- mat4: mat4 module for matrix operations
+function renderer_gpu.drawMeshGouraud(meshData, modelMatrix, texData, mat4)
+    if not meshData or not meshData.triangles or #meshData.triangles == 0 then return end
+    if not texData then return end
+
+    local vertices = meshData.vertices
+    local triangles = meshData.triangles
+
+    -- First pass: calculate face normals and accumulate at vertices
+    local vertexNormals = {}
+    for i = 1, #vertices do
+        vertexNormals[i] = {x = 0, y = 0, z = 0, count = 0}
+    end
+
+    -- Transform vertices to world space and calculate face normals
+    local worldPositions = {}
+    for i, v in ipairs(vertices) do
+        local wp = mat4.multiplyVec4(modelMatrix, {v.pos[1], v.pos[2], v.pos[3], 1})
+        worldPositions[i] = {wp[1], wp[2], wp[3]}
+    end
+
+    -- Calculate face normals and accumulate at vertices
+    for _, tri in ipairs(triangles) do
+        local p1 = worldPositions[tri[1]]
+        local p2 = worldPositions[tri[2]]
+        local p3 = worldPositions[tri[3]]
+
+        local nx, ny, nz = renderer_gpu.calculateFaceNormal(p1, p2, p3)
+
+        -- Accumulate normal at each vertex
+        for j = 1, 3 do
+            local vi = tri[j]
+            vertexNormals[vi].x = vertexNormals[vi].x + nx
+            vertexNormals[vi].y = vertexNormals[vi].y + ny
+            vertexNormals[vi].z = vertexNormals[vi].z + nz
+            vertexNormals[vi].count = vertexNormals[vi].count + 1
+        end
+    end
+
+    -- Second pass: calculate per-vertex brightness
+    local vertexBrightness = {}
+    for i = 1, #vertices do
+        local vn = vertexNormals[i]
+        local nx, ny, nz = 0, 1, 0  -- Default up
+
+        if vn.count > 0 then
+            -- Average the accumulated normals
+            nx = vn.x / vn.count
+            ny = vn.y / vn.count
+            nz = vn.z / vn.count
+
+            -- Normalize
+            local len = math.sqrt(nx*nx + ny*ny + nz*nz)
+            if len > 0.001 then
+                nx, ny, nz = nx / len, ny / len, nz / len
+            end
+        end
+
+        vertexBrightness[i] = renderer_gpu.calculateVertexBrightness(nx, ny, nz)
+    end
+
+    -- Third pass: draw triangles with per-vertex brightness
+    local image = getImage(texData)
+    local batch = getBatch(image)
+
+    for _, tri in ipairs(triangles) do
+        local v1 = vertices[tri[1]]
+        local v2 = vertices[tri[2]]
+        local v3 = vertices[tri[3]]
+
+        local b1 = vertexBrightness[tri[1]]
+        local b2 = vertexBrightness[tri[2]]
+        local b3 = vertexBrightness[tri[3]]
+
+        -- Create vertices with world-space positions
+        local wv1 = {pos = worldPositions[tri[1]], uv = v1.uv}
+        local wv2 = {pos = worldPositions[tri[2]], uv = v2.uv}
+        local wv3 = {pos = worldPositions[tri[3]], uv = v3.uv}
+
+        addTriangleToBatchGouraud(batch, wv1, wv2, wv3, b1, b2, b3)
+        stats.trianglesDrawn = stats.trianglesDrawn + 1
+    end
+end
+
+-- Draw a mesh with flat shading (per-face lighting, no interpolation)
+-- Same interface as drawMeshGouraud for easy switching
+function renderer_gpu.drawMeshFlat(meshData, modelMatrix, texData, mat4)
+    if not meshData or not meshData.triangles or #meshData.triangles == 0 then return end
+    if not texData then return end
+
+    local vertices = meshData.vertices
+    local triangles = meshData.triangles
+
+    -- Transform vertices to world space
+    local worldPositions = {}
+    for i, v in ipairs(vertices) do
+        local wp = mat4.multiplyVec4(modelMatrix, {v.pos[1], v.pos[2], v.pos[3], 1})
+        worldPositions[i] = {wp[1], wp[2], wp[3]}
+    end
+
+    local image = getImage(texData)
+    local batch = getBatch(image)
+
+    -- Draw each triangle with flat shading (single brightness per face)
+    for _, tri in ipairs(triangles) do
+        local p1 = worldPositions[tri[1]]
+        local p2 = worldPositions[tri[2]]
+        local p3 = worldPositions[tri[3]]
+
+        -- Calculate face normal
+        local nx, ny, nz = renderer_gpu.calculateFaceNormal(p1, p2, p3)
+
+        -- Calculate brightness for the whole face
+        local brightness = renderer_gpu.calculateVertexBrightness(nx, ny, nz)
+
+        local v1 = vertices[tri[1]]
+        local v2 = vertices[tri[2]]
+        local v3 = vertices[tri[3]]
+
+        -- Create vertices with world-space positions
+        local wv1 = {pos = p1, uv = v1.uv}
+        local wv2 = {pos = p2, uv = v2.uv}
+        local wv3 = {pos = p3, uv = v3.uv}
+
+        addTriangleToBatch(batch, wv1, wv2, wv3, brightness)
+        stats.trianglesDrawn = stats.trianglesDrawn + 1
+    end
 end
 
 return renderer_gpu

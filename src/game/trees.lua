@@ -127,13 +127,24 @@ function Trees.draw(renderer, cam_x, cam_y, cam_z, cam_yaw)
                 local v3 = mesh_vertices[tri[3]]
 
                 -- Offset vertices by tree position
+                local p1 = {v1.pos[1] + tree_x, v1.pos[2] + tree_y, v1.pos[3] + tree_z}
+                local p2 = {v2.pos[1] + tree_x, v2.pos[2] + tree_y, v2.pos[3] + tree_z}
+                local p3 = {v3.pos[1] + tree_x, v3.pos[2] + tree_y, v3.pos[3] + tree_z}
+
+                -- Calculate lighting if enabled
+                local brightness = 1.0
+                if config.GOURAUD_SHADING and renderer.calculateFaceNormal and renderer.calculateVertexBrightness then
+                    local nx, ny, nz = renderer.calculateFaceNormal(p1, p2, p3)
+                    brightness = renderer.calculateVertexBrightness(nx, ny, nz)
+                end
+
                 renderer.drawTriangle3D(
-                    {pos = {v1.pos[1] + tree_x, v1.pos[2] + tree_y, v1.pos[3] + tree_z}, uv = v1.uv},
-                    {pos = {v2.pos[1] + tree_x, v2.pos[2] + tree_y, v2.pos[3] + tree_z}, uv = v2.uv},
-                    {pos = {v3.pos[1] + tree_x, v3.pos[2] + tree_y, v3.pos[3] + tree_z}, uv = v3.uv},
+                    {pos = p1, uv = v1.uv},
+                    {pos = p2, uv = v2.uv},
+                    {pos = p3, uv = v3.uv},
                     nil,
                     cached_tex_data,
-                    nil,  -- brightness
+                    brightness,
                     fogFactor
                 )
             end

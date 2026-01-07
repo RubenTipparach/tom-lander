@@ -123,12 +123,24 @@ function Building.draw(building, renderer, cam_x, cam_z)
             local p2 = mat4.multiplyVec4(modelMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
             local p3 = mat4.multiplyVec4(modelMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
+            -- Calculate lighting if enabled
+            local brightness = 1.0
+            if config.GOURAUD_SHADING and renderer.calculateFaceNormal and renderer.calculateVertexBrightness then
+                local nx, ny, nz = renderer.calculateFaceNormal(
+                    {p1[1], p1[2], p1[3]},
+                    {p2[1], p2[2], p2[3]},
+                    {p3[1], p3[2], p3[3]}
+                )
+                brightness = renderer.calculateVertexBrightness(nx, ny, nz)
+            end
+
             renderer.drawTriangle3D(
                 {pos = {p1[1], p1[2], p1[3]}, uv = tri.uvs[1]},
                 {pos = {p2[1], p2[2], p2[3]}, uv = tri.uvs[2]},
                 {pos = {p3[1], p3[2], p3[3]}, uv = tri.uvs[3]},
                 nil,
-                texData
+                texData,
+                brightness
             )
         end
     end

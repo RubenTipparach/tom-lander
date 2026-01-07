@@ -4,6 +4,7 @@
 local quat = require("quat")
 local mat4 = require("mat4")
 local Constants = require("constants")
+local config = require("config")
 
 local Turret = {}
 
@@ -231,13 +232,25 @@ function Turret.draw(renderer, ship)
         local t2 = mat4.multiplyVec4(modelMatrix, {v2[1], v2[2], v2[3], 1})
         local t3 = mat4.multiplyVec4(modelMatrix, {v3[1], v3[2], v3[3], 1})
 
+        -- Calculate lighting if enabled
+        local brightness = 1.0
+        if config.GOURAUD_SHADING and renderer.calculateFaceNormal and renderer.calculateVertexBrightness then
+            local nx, ny, nz = renderer.calculateFaceNormal(
+                {t1[1], t1[2], t1[3]},
+                {t2[1], t2[2], t2[3]},
+                {t3[1], t3[2], t3[3]}
+            )
+            brightness = renderer.calculateVertexBrightness(nx, ny, nz)
+        end
+
         -- Draw triangle
         renderer.drawTriangle3D(
             {pos = {t1[1], t1[2], t1[3]}, uv = {0, 0}},
             {pos = {t2[1], t2[2], t2[3]}, uv = {1, 0}},
             {pos = {t3[1], t3[2], t3[3]}, uv = {1, 1}},
             nil,
-            texData
+            texData,
+            brightness
         )
     end
 end

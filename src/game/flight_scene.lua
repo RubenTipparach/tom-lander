@@ -72,6 +72,14 @@ function flight_scene.load()
         softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
     end
 
+    -- Initialize directional lighting for Gouraud shading
+    if renderer.setDirectionalLight then
+        local lightDir = config.LIGHT_DIRECTION or {0.5, -0.8, 0.3}
+        local intensity = config.LIGHT_INTENSITY or 0.8
+        local ambient = config.AMBIENT_LIGHT or 0.3
+        renderer.setDirectionalLight(lightDir[1], lightDir[2], lightDir[3], intensity, ambient)
+    end
+
     -- Create projection matrix
     local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
     projMatrix = mat4.perspective(config.FOV, aspect, config.NEAR_PLANE, config.FAR_PLANE)
@@ -603,6 +611,7 @@ function flight_scene.draw()
 
         -- Draw aliens
         Aliens.draw(renderer)
+        Aliens.draw_debug(renderer)
 
         -- Draw bullets
         Bullets.draw(renderer)

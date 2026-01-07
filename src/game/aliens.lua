@@ -5,6 +5,7 @@ local quat = require("quat")
 local mat4 = require("mat4")
 local obj_loader = require("obj_loader")
 local Constants = require("constants")
+local config = require("config")
 
 local Aliens = {}
 
@@ -421,23 +422,30 @@ function Aliens.draw_alien(renderer, alien, mesh, texData, scale)
     local modelMatrix = mat4.multiply(rotationMatrix, scaleMatrix)
     modelMatrix = mat4.multiply(mat4.translation(alien.x, alien.y, alien.z), modelMatrix)
 
-    -- Draw mesh triangles (same pattern as ship.lua)
-    for _, tri in ipairs(mesh.triangles) do
-        local v1 = mesh.vertices[tri[1]]
-        local v2 = mesh.vertices[tri[2]]
-        local v3 = mesh.vertices[tri[3]]
+    -- Use Gouraud or flat shading based on config
+    if config.GOURAUD_SHADING and renderer.drawMeshGouraud then
+        renderer.drawMeshGouraud(mesh, modelMatrix, texData, mat4)
+    elseif renderer.drawMeshFlat then
+        renderer.drawMeshFlat(mesh, modelMatrix, texData, mat4)
+    else
+        -- Fallback: draw without lighting
+        for _, tri in ipairs(mesh.triangles) do
+            local v1 = mesh.vertices[tri[1]]
+            local v2 = mesh.vertices[tri[2]]
+            local v3 = mesh.vertices[tri[3]]
 
-        local p1 = mat4.multiplyVec4(modelMatrix, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
-        local p2 = mat4.multiplyVec4(modelMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
-        local p3 = mat4.multiplyVec4(modelMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
+            local p1 = mat4.multiplyVec4(modelMatrix, {v1.pos[1], v1.pos[2], v1.pos[3], 1})
+            local p2 = mat4.multiplyVec4(modelMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
+            local p3 = mat4.multiplyVec4(modelMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
-        renderer.drawTriangle3D(
-            {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
-            {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
-            {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
-            nil,
-            texData
-        )
+            renderer.drawTriangle3D(
+                {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
+                {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
+                {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
+                nil,
+                texData
+            )
+        end
     end
 end
 
@@ -464,6 +472,119 @@ end
 -- Check if all waves complete
 function Aliens.all_waves_complete()
     return Aliens.current_wave >= #Aliens.waves and Aliens.wave_complete
+end
+
+-- Draw debug visuals for combat (bounding boxes, velocity lines, target lines)
+function Aliens.draw_debug(renderer)
+    if not config.COMBAT_DEBUG then return end
+
+    -- Debug colors (as texData-like tables with getPixel)
+    local red = {getPixel = function() return 255, 0, 0, 255 end}
+    local green = {getPixel = function() return 0, 255, 0, 255 end}
+    local blue = {getPixel = function() return 0, 100, 255, 255 end}
+    local yellow = {getPixel = function() return 255, 255, 0, 255 end}
+    local cyan = {getPixel = function() return 0, 255, 255, 255 end}
+    local magenta = {getPixel = function() return 255, 0, 255, 255 end}
+
+    -- Draw debug for all fighters
+    for _, fighter in ipairs(Aliens.fighters) do
+        Aliens.draw_alien_debug(renderer, fighter, 0.5, red, green, blue, yellow, cyan)
+    end
+
+    -- Draw debug for mother ship
+    if Aliens.mother_ship then
+        Aliens.draw_alien_debug(renderer, Aliens.mother_ship, 2.0, red, green, blue, yellow, magenta)
+    end
+end
+
+-- Draw debug visuals for a single alien
+function Aliens.draw_alien_debug(renderer, alien, radius, red, green, blue, yellow, velocity_color)
+    local x, y, z = alien.x, alien.y, alien.z
+
+    -- Draw 3-axis cross at center
+    local axis_length = radius * 1.5
+
+    -- X axis (red)
+    Aliens.draw_debug_line(renderer, x - axis_length, y, z, x + axis_length, y, z, red)
+    -- Y axis (green)
+    Aliens.draw_debug_line(renderer, x, y - axis_length, z, x, y + axis_length, z, green)
+    -- Z axis (blue)
+    Aliens.draw_debug_line(renderer, x, y, z - axis_length, x, y, z + axis_length, blue)
+
+    -- Draw bounding box (wireframe)
+    local r = radius
+    -- Bottom face edges
+    Aliens.draw_debug_line(renderer, x-r, y-r, z-r, x+r, y-r, z-r, yellow)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z-r, x+r, y-r, z+r, yellow)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x-r, y-r, z+r, yellow)
+    Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y-r, z-r, yellow)
+    -- Top face edges
+    Aliens.draw_debug_line(renderer, x-r, y+r, z-r, x+r, y+r, z-r, yellow)
+    Aliens.draw_debug_line(renderer, x+r, y+r, z-r, x+r, y+r, z+r, yellow)
+    Aliens.draw_debug_line(renderer, x+r, y+r, z+r, x-r, y+r, z+r, yellow)
+    Aliens.draw_debug_line(renderer, x-r, y+r, z+r, x-r, y+r, z-r, yellow)
+    -- Vertical edges
+    Aliens.draw_debug_line(renderer, x-r, y-r, z-r, x-r, y+r, z-r, yellow)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z-r, x+r, y+r, z-r, yellow)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x+r, y+r, z+r, yellow)
+    Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y+r, z+r, yellow)
+
+    -- Draw velocity vector (cyan/magenta line showing movement direction)
+    local vel_scale = 2.0  -- Scale velocity for visibility
+    local vx, vy, vz = alien.vx * vel_scale, alien.vy * vel_scale, alien.vz * vel_scale
+    Aliens.draw_debug_line(renderer, x, y, z, x + vx, y + vy, z + vz, velocity_color)
+
+    -- Draw target line (red line to target)
+    if alien.target then
+        local tx, ty, tz = alien.target.x, alien.target.y, alien.target.z
+        local target_red = {getPixel = function() return 255, 50, 50, 200 end}
+        Aliens.draw_debug_line(renderer, x, y, z, tx, ty, tz, target_red)
+    end
+end
+
+-- Draw a debug line as a thin 3D quad
+function Aliens.draw_debug_line(renderer, x1, y1, z1, x2, y2, z2, color)
+    local thickness = 0.02
+
+    -- Direction vector
+    local dx = x2 - x1
+    local dy = y2 - y1
+    local dz = z2 - z1
+    local len = math.sqrt(dx*dx + dy*dy + dz*dz)
+    if len < 0.001 then return end
+
+    -- Normalize
+    dx, dy, dz = dx/len, dy/len, dz/len
+
+    -- Find a perpendicular vector (cross with up, or right if too parallel)
+    local px, py, pz
+    if math.abs(dy) < 0.9 then
+        -- Cross with up (0,1,0)
+        px = dz
+        py = 0
+        pz = -dx
+    else
+        -- Cross with right (1,0,0)
+        px = 0
+        py = -dz
+        pz = dy
+    end
+
+    -- Normalize perpendicular
+    local plen = math.sqrt(px*px + py*py + pz*pz)
+    if plen > 0.001 then
+        px, py, pz = px/plen * thickness, py/plen * thickness, pz/plen * thickness
+    end
+
+    -- Create quad vertices
+    local v1 = {pos = {x1 - px, y1 - py, z1 - pz}, uv = {0, 0}}
+    local v2 = {pos = {x1 + px, y1 + py, z1 + pz}, uv = {1, 0}}
+    local v3 = {pos = {x2 + px, y2 + py, z2 + pz}, uv = {1, 1}}
+    local v4 = {pos = {x2 - px, y2 - py, z2 - pz}, uv = {0, 1}}
+
+    -- Draw as two triangles
+    renderer.drawTriangle3D(v1, v2, v3, nil, color)
+    renderer.drawTriangle3D(v1, v3, v4, nil, color)
 end
 
 return Aliens

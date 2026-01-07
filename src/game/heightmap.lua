@@ -4,6 +4,7 @@
 
 local Constants = require("constants")
 local Palette = require("palette")
+local config = require("config")
 
 -- Localize math functions
 local floor = math.floor
@@ -277,12 +278,20 @@ function Heightmap.draw(renderer, cam_x, cam_z, grid_count, render_distance, cam
         else
             -- Land uses terrain shader with per-vertex height
             local hi = face.height_indices
+
+            -- Calculate lighting if enabled
+            local brightness = 1.0
+            if config.GOURAUD_SHADING and renderer.calculateFaceNormal and renderer.calculateVertexBrightness then
+                local nx, ny, nz = renderer.calculateFaceNormal(v1.pos, v2.pos, v3.pos)
+                brightness = renderer.calculateVertexBrightness(nx, ny, nz)
+            end
+
             renderer.drawTerrainTriangle(
                 {pos = v1.pos, uv = face.uvs[1]},
                 {pos = v2.pos, uv = face.uvs[2]},
                 {pos = v3.pos, uv = face.uvs[3]},
                 hi[1], hi[2], hi[3],
-                1.0  -- brightness
+                brightness
             )
         end
     end
