@@ -23,6 +23,9 @@ local HUD = require("hud")
 local Mission = require("mission")
 local Missions = require("missions")
 local Weather = require("weather")
+local Aliens = require("aliens")
+local Bullets = require("bullets")
+local Turret = require("turret")
 
 local flight_scene = {}
 
@@ -52,6 +55,10 @@ local cargo_items = {}
 -- Game mode and mission
 local game_mode = "arcade"  -- "arcade" or "simulation"
 local current_mission_num = nil  -- nil = free flight
+
+-- Combat state (Mission 6)
+local combat_active = false
+local wave_start_delay = 0  -- Delay before starting next wave
 
 -- Fonts
 local thrusterFont = nil
@@ -178,6 +185,31 @@ function flight_scene.load()
     -- Start mission if selected
     if current_mission_num then
         Missions.start(current_mission_num, Mission)
+    end
+
+    -- Initialize combat systems for Mission 6
+    combat_active = (current_mission_num == 6)
+    if combat_active then
+        -- Reset combat state
+        Aliens.reset()
+        Bullets.reset()
+        Turret.init()
+
+        -- Set up alien callbacks
+        Aliens.spawn_bullet = function(x, y, z, dx, dy, dz, range)
+            Bullets.spawn_enemy_bullet(x, y, z, dx, dy, dz, range)
+        end
+        Aliens.on_fighter_destroyed = function(x, y, z)
+            print("Fighter destroyed at " .. x .. ", " .. y .. ", " .. z)
+            -- TODO: Spawn explosion particles
+        end
+        Aliens.on_mothership_destroyed = function(x, y, z)
+            print("MOTHER SHIP DESTROYED!")
+            -- TODO: Spawn big explosion
+        end
+
+        -- Start first wave with delay
+        wave_start_delay = 2.0
     end
 
     -- Create camera (matching Picotron initial state)
@@ -376,6 +408,72 @@ function flight_scene.update(dt)
     Weather.update(dt, cam.pos.x, cam.pos.y, cam.pos.z, ship.vx, ship.vy, ship.vz)
     Weather.apply_wind(ship, ship.y, is_grounded)
 
+    -- Update combat systems (Mission 6)
+    if combat_active then
+        -- Wave start delay
+        if wave_start_delay > 0 then
+            wave_start_delay = wave_start_delay - dt
+            if wave_start_delay <= 0 then
+                -- Start next wave
+                local has_more = Aliens.start_next_wave(ship, LandingPads)
+                if has_more then
+                    print("Wave " .. Aliens.get_wave() .. " starting!")
+                end
+            end
+        end
+
+        -- Check if wave complete and start next
+        if Aliens.wave_complete and not Aliens.all_waves_complete() then
+            wave_start_delay = 3.0  -- Delay between waves
+            Aliens.wave_complete = false
+        end
+
+        -- Check for mission complete
+        if Aliens.all_waves_complete() and not Mission.is_complete() then
+            Mission.complete()
+        end
+
+        -- Update aliens (pass landing pad status for safe zones)
+        local player_on_pad = LandingPads.check_landing(ship.x, ship.y, ship.z, ship.vy) ~= nil
+        Aliens.update(dt, ship, player_on_pad)
+
+        -- Update turret (auto-aims at enemies)
+        local enemies = Aliens.get_all()
+        Turret.update(dt, ship, enemies)
+
+        -- Auto-fire turret when target acquired
+        if Turret.can_fire() and Turret.target then
+            local dir_x, dir_y, dir_z = Turret.get_fire_direction(ship)
+            if dir_x then
+                local turret_x, turret_y, turret_z = Turret.get_position(ship)
+                Bullets.spawn_player_bullet(turret_x, turret_y, turret_z, dir_x, dir_y, dir_z)
+            end
+        end
+
+        -- Update bullets
+        Bullets.update(dt)
+
+        -- Check player bullet hits on aliens
+        for _, fighter in ipairs(Aliens.fighters) do
+            local hits = Bullets.check_collision_sphere("enemy", fighter.x, fighter.y, fighter.z, 0.5)
+            for _, hit in ipairs(hits) do
+                fighter.health = fighter.health - 25  -- Damage per hit
+            end
+        end
+        if Aliens.mother_ship then
+            local hits = Bullets.check_collision_sphere("enemy", Aliens.mother_ship.x, Aliens.mother_ship.y, Aliens.mother_ship.z, 2.0)
+            for _, hit in ipairs(hits) do
+                Aliens.mother_ship.health = Aliens.mother_ship.health - 25
+            end
+        end
+
+        -- Check enemy bullet hits on player
+        local player_hits = Bullets.check_collision_sphere("player", ship.x, ship.y, ship.z, 0.5)
+        for _, hit in ipairs(player_hits) do
+            ship:take_damage(10)  -- Damage per enemy bullet
+        end
+    end
+
     -- Auto-level with shift key
     if love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
         ship:auto_level(dt)
@@ -498,6 +596,18 @@ function flight_scene.draw()
     ship:draw(renderer)
     profile(" ship")
 
+    -- Draw combat elements (Mission 6)
+    if combat_active then
+        -- Draw turret on ship
+        Turret.draw(renderer, ship)
+
+        -- Draw aliens
+        Aliens.draw(renderer)
+
+        -- Draw bullets
+        Bullets.draw(renderer)
+    end
+
     -- Draw smoke particles (disabled - billboard rendering needs fixing)
     -- smoke_system:draw(renderer, cam)
 
@@ -534,6 +644,19 @@ function flight_scene.draw()
     local mission_data
     if Mission.is_active() then
         mission_data = Mission.get_hud_data()
+        -- Update Mission 6 objectives with wave info
+        if combat_active and not Mission.is_complete() then
+            local wave = Aliens.get_wave()
+            local total = Aliens.get_total_waves()
+            local enemies = #Aliens.fighters + (Aliens.mother_ship and 1 or 0)
+            mission_data.objectives[1] = "Wave " .. wave .. "/" .. total
+            mission_data.objectives[2] = "Enemies: " .. enemies
+            if wave == total and Aliens.mother_ship then
+                mission_data.objectives[3] = "DESTROY THE MOTHER SHIP!"
+            else
+                mission_data.objectives[3] = ""
+            end
+        end
     else
         mission_data = {
             name = "FREE FLIGHT",
@@ -567,6 +690,11 @@ function flight_scene.keypressed(key)
     -- Handle mission complete - Q to return to menu
     if Mission.is_complete() and key == "q" then
         Mission.reset()
+        if combat_active then
+            Aliens.reset()
+            Bullets.reset()
+            combat_active = false
+        end
         local scene_manager = require("scene_manager")
         scene_manager.switch("menu")
         return
@@ -578,6 +706,11 @@ function flight_scene.keypressed(key)
             -- Return to menu from pause
             HUD.close_pause()
             Mission.reset()
+            if combat_active then
+                Aliens.reset()
+                Bullets.reset()
+                combat_active = false
+            end
             local scene_manager = require("scene_manager")
             scene_manager.switch("menu")
             return
@@ -605,6 +738,14 @@ function flight_scene.keypressed(key)
         if Mission.is_active() and current_mission_num then
             Mission.reset()
             Missions.start(current_mission_num, Mission)
+
+            -- Reset combat for Mission 6
+            if current_mission_num == 6 then
+                Aliens.reset()
+                Bullets.reset()
+                Turret.reset()
+                wave_start_delay = 2.0
+            end
         end
 
         -- Reset free-flight cargo

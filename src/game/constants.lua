@@ -25,6 +25,11 @@ Constants.SPRITE_BUILDING_SIDE_ALT = 19  -- Alternate building side texture (32x
 Constants.SPRITE_CARGO = 20  -- Cargo pickup object texture (32x32)
 Constants.SPRITE_PLANET = 21  -- Planet texture for menu background (64x32)
 Constants.SPRITE_CLOUDS = 22  -- Cloud layer texture for menu planet (64x32)
+Constants.SPRITE_TURRET = 24  -- Player turret texture (32x32)
+Constants.SPRITE_BULLET_PLAYER = 25  -- Player bullet texture (16x16)
+Constants.SPRITE_BULLET_ENEMY = 26  -- Enemy bullet texture (16x16)
+Constants.SPRITE_UFO_FIGHTER = 27  -- UFO fighter alien texture (32x32)
+Constants.SPRITE_UFO_MOTHER = 28  -- Mother ship texture (64x64)
 Constants.SPRITE_HEIGHTMAP = 64  -- Heightmap data source (128x128)
 
 -- Landing pad names

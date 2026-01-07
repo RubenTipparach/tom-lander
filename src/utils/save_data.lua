@@ -2,6 +2,7 @@
 -- Uses Love2D's filesystem to save/load JSON data
 
 local json = require("json")  -- Simple JSON library in src/lib/
+local config = require("config")
 
 local SaveData = {}
 
@@ -103,6 +104,11 @@ end
 
 -- Check if a mission is unlocked
 function SaveData.is_mission_unlocked(mission_num)
+    -- Dev mode: all missions unlocked
+    if config.UNLOCK_ALL_MISSIONS then
+        return true
+    end
+
     if not SaveData.mission_progress then
         SaveData.init()
     end

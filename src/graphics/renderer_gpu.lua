@@ -836,4 +836,46 @@ function renderer_gpu.worldToScreen(world_x, world_y, world_z)
     return screen_x, screen_y, true
 end
 
+-- Draw a camera-facing billboard (quad that always faces camera)
+-- Uses the main 3D batch so it's depth tested with other geometry
+function renderer_gpu.drawBillboard(x, y, z, size, texData)
+    if not currentViewMatrix then return end
+
+    local half = size * 0.5
+
+    -- Extract camera right and up vectors from view matrix
+    -- View matrix is rotation + translation, so first 3 columns are the rotated axes
+    -- For a proper billboard, we use the inverse (transpose of rotation part)
+    local right_x = currentViewMatrix[1]
+    local right_y = currentViewMatrix[5]
+    local right_z = currentViewMatrix[9]
+
+    local up_x = currentViewMatrix[2]
+    local up_y = currentViewMatrix[6]
+    local up_z = currentViewMatrix[10]
+
+    -- Build quad vertices (camera-facing)
+    -- Bottom-left, bottom-right, top-right, top-left
+    local v1 = {
+        pos = {x - right_x * half - up_x * half, y - right_y * half - up_y * half, z - right_z * half - up_z * half},
+        uv = {0, 1}
+    }
+    local v2 = {
+        pos = {x + right_x * half - up_x * half, y + right_y * half - up_y * half, z + right_z * half - up_z * half},
+        uv = {1, 1}
+    }
+    local v3 = {
+        pos = {x + right_x * half + up_x * half, y + right_y * half + up_y * half, z + right_z * half + up_z * half},
+        uv = {1, 0}
+    }
+    local v4 = {
+        pos = {x - right_x * half + up_x * half, y - right_y * half + up_y * half, z - right_z * half + up_z * half},
+        uv = {0, 0}
+    }
+
+    -- Draw as two triangles
+    renderer_gpu.drawTriangle3D(v1, v2, v3, nil, texData)
+    renderer_gpu.drawTriangle3D(v1, v3, v4, nil, texData)
+end
+
 return renderer_gpu
