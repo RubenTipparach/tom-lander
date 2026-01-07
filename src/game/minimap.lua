@@ -96,7 +96,7 @@ function Minimap.world_to_minimap(world_x, world_z, heightmap)
 end
 
 -- Draw the minimap using the software renderer
-function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items)
+function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, mission_target)
     -- Generate cache on first draw
     if not terrain_cache and heightmap then
         Minimap.generate_terrain_cache(heightmap)
@@ -173,6 +173,22 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items)
                     end
                 end
             end
+        end
+    end
+
+    -- Draw mission target (blinking green diamond)
+    if mission_target then
+        local blink = (love.timer.getTime() * 3) % 1 < 0.7  -- Faster blink, mostly on
+        if blink then
+            local tx = Minimap.X + Minimap.SIZE / 2 + mission_target.x * pixels_per_world_unit
+            local ty = Minimap.Y + Minimap.SIZE / 2 + mission_target.z * pixels_per_world_unit
+
+            -- Diamond shape (4 pixels in cross pattern)
+            renderer.drawPixel(math.floor(tx), math.floor(ty - 1), 0, 255, 0)  -- Top
+            renderer.drawPixel(math.floor(tx - 1), math.floor(ty), 0, 255, 0)  -- Left
+            renderer.drawPixel(math.floor(tx + 1), math.floor(ty), 0, 255, 0)  -- Right
+            renderer.drawPixel(math.floor(tx), math.floor(ty + 1), 0, 255, 0)  -- Bottom
+            renderer.drawPixel(math.floor(tx), math.floor(ty), 0, 255, 0)      -- Center
         end
     end
 

@@ -10,6 +10,7 @@ local quat = require("quat")
 local obj_loader = require("obj_loader")
 local Constants = require("constants")
 local Palette = require("palette")
+local SaveData = require("save_data")
 
 -- Ship display settings (matching Picotron, Z inverted for Love2D)
 local SHIP_X = 0
@@ -291,8 +292,8 @@ function menu.update_options()
     menu.options = {}
 
     -- Main menu options
-    table.insert(menu.options, {text = "FREE FLIGHT", action = "free_flight", locked = false})
     table.insert(menu.options, {text = "CAMPAIGN", action = "campaign", locked = false})
+    table.insert(menu.options, {text = "FREE FLIGHT", action = "free_flight", locked = false})
     table.insert(menu.options, {text = "QUIT", action = "quit", locked = false})
 
     -- Clamp selected option
@@ -350,6 +351,7 @@ function menu.update_campaign_options()
         table.insert(menu.campaign_options, {text = "MISSION 6: [LOCKED]", mission = 6, locked = true})
     end
 
+    table.insert(menu.campaign_options, {text = "RESET PROGRESS", action = "reset", locked = false})
     table.insert(menu.campaign_options, {text = "BACK", action = "back", locked = false})
 
     -- Clamp selected campaign option
@@ -380,15 +382,9 @@ function menu.load()
     menu.selected_mode = 1
     menu.pending_mission = nil
 
-    -- Initialize mission progress (only missions 0 and 1 unlocked)
-    menu.mission_progress = {
-        mission_1 = true,   -- Unlocked
-        mission_2 = false,  -- Locked
-        mission_3 = false,  -- Locked
-        mission_4 = false,  -- Locked
-        mission_5 = false,  -- Locked
-        mission_6 = false   -- Locked
-    }
+    -- Load mission progress from save file
+    SaveData.init()
+    menu.mission_progress = SaveData.get_progress()
 
     menu.update_options()
     menu.update_campaign_options()
@@ -523,6 +519,8 @@ function menu.select_option()
         menu.game_mode = "arcade"
         scene_manager.switch("flight")
     elseif option.action == "campaign" then
+        -- Reload progress in case a mission was completed
+        menu.mission_progress = SaveData.get_progress()
         -- Show campaign mission list
         menu.show_campaign = true
         menu.show_options = false
@@ -553,6 +551,11 @@ function menu.select_campaign_option()
         -- Start story cutscene
         menu.active = false
         scene_manager.switch("cutscene")
+    elseif option.action == "reset" then
+        -- Reset all progress
+        SaveData.reset()
+        menu.mission_progress = SaveData.get_progress()
+        menu.update_campaign_options()
     elseif option.action == "back" then
         -- Go back to main menu
         menu.show_campaign = false

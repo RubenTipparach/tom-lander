@@ -174,51 +174,18 @@ function HUD.draw_compass(ship, camera, mission_target)
         {from = 5, to = 4, color = COLOR_GREY, z = projected_points[4].z},  -- West (grey)
     }
 
-    -- Add mission target arrow if provided (orange)
-    if mission_target then
-        local dx = mission_target.x - ship.x
-        local dz = mission_target.z - ship.z
-
-        local mag = math.sqrt(dx*dx + dz*dz)
-        if mag > 0.01 then
-            local target_point = {x = (-dx / mag) * COMPASS_SIZE, y = 0, z = (-dz / mag) * COMPASS_SIZE}
-
-            -- Transform by camera rotation
-            local x_yaw = target_point.x * cos_yaw - target_point.z * sin_yaw
-            local z_yaw = target_point.x * sin_yaw + target_point.z * cos_yaw
-            local y_pitch = target_point.y * cos_pitch - z_yaw * sin_pitch
-            local z_pitch = target_point.y * sin_pitch + z_yaw * cos_pitch
-
-            table.insert(arrows, {
-                screen_x = COMPASS_X + x_yaw,
-                screen_y = COMPASS_Y + y_pitch,
-                color = COLOR_ORANGE,
-                z = z_pitch,
-                is_target = true
-            })
-        end
-    end
-
     -- Sort arrows by depth (back to front, furthest first)
     table.sort(arrows, function(a, b) return a.z < b.z end)
 
     -- Draw arrows in sorted order (back to front)
     for _, arrow in ipairs(arrows) do
-        if arrow.is_target then
-            -- Draw target arrow (orange)
-            renderer.drawLine2D(COMPASS_X, COMPASS_Y, arrow.screen_x, arrow.screen_y,
-                               arrow.color[1], arrow.color[2], arrow.color[3])
-            renderer.drawCircleFill(arrow.screen_x, arrow.screen_y, 2,
-                                    arrow.color[1], arrow.color[2], arrow.color[3])
-        else
-            -- Draw compass direction arrows
-            local p1 = projected_points[arrow.from]
-            local p2 = projected_points[arrow.to]
-            renderer.drawLine2D(p1.x, p1.y, p2.x, p2.y,
-                               arrow.color[1], arrow.color[2], arrow.color[3])
-            renderer.drawCircleFill(p2.x, p2.y, 1,
-                                    arrow.color[1], arrow.color[2], arrow.color[3])
-        end
+        -- Draw compass direction arrows
+        local p1 = projected_points[arrow.from]
+        local p2 = projected_points[arrow.to]
+        renderer.drawLine2D(p1.x, p1.y, p2.x, p2.y,
+                           arrow.color[1], arrow.color[2], arrow.color[3])
+        renderer.drawCircleFill(p2.x, p2.y, 1,
+                                arrow.color[1], arrow.color[2], arrow.color[3])
     end
 
     -- Center dot (drawn last, always on top)
@@ -494,7 +461,10 @@ function HUD.draw(ship, camera, opts)
     HUD.draw_repair_indicator(opts.is_repairing)
 
     -- Draw thruster indicator (WASD keys showing which thrusters are firing)
-    HUD.draw_thruster_indicator(ship)
+    -- Skip when paused so pause menu isn't obscured
+    if not show_pause_menu then
+        HUD.draw_thruster_indicator(ship)
+    end
 
     -- Draw pause menu on top of everything
     HUD.draw_pause_menu()

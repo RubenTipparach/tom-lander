@@ -309,6 +309,97 @@ function renderer_gpu.drawTriangleBatch(triangles, texData, brightness)
     end
 end
 
+-- White 1x1 texture for solid color geometry
+local whiteTexData = nil
+local whiteImage = nil
+
+local function getWhiteTexture()
+    if not whiteTexData then
+        whiteTexData = love.image.newImageData(1, 1)
+        whiteTexData:setPixel(0, 0, 1, 1, 1, 1)
+        whiteImage = love.graphics.newImage(whiteTexData)
+        whiteImage:setFilter("nearest", "nearest")
+    end
+    return whiteTexData, whiteImage
+end
+
+-- Add a colored triangle to the batch (for solid color geometry like rain)
+local function addColoredTriangleToBatch(batch, p1, p2, p3, r, g, b)
+    local verts = batch.vertices
+    local idx = batch.count * 3
+
+    -- Normalize color to 0-1 range
+    local nr, ng, nb = r/255, g/255, b/255
+
+    -- Format: {x, y, z, w, u, v, r, g, b, a}
+    verts[idx + 1] = {p1[1], p1[2], p1[3], 1.0, 0.5, 0.5, nr, ng, nb, 1.0}
+    verts[idx + 2] = {p2[1], p2[2], p2[3], 1.0, 0.5, 0.5, nr, ng, nb, 1.0}
+    verts[idx + 3] = {p3[1], p3[2], p3[3], 1.0, 0.5, 0.5, nr, ng, nb, 1.0}
+    batch.count = batch.count + 1
+end
+
+-- Draw a 3D line as a thin quad (depth tested, goes through normal 3D pipeline)
+-- This draws BEFORE flush3D, so it will be properly occluded by geometry
+function renderer_gpu.drawLine3DDepth(p0, p1, r, g, b, thickness)
+    if not currentProjectionMatrix then
+        error("Must call renderer_gpu.setMatrices() before drawLine3DDepth()")
+    end
+
+    thickness = thickness or 0.02  -- Default thin line
+
+    -- Get the white texture for solid color
+    local texData, image = getWhiteTexture()
+
+    -- Get or create batch for white texture
+    if not batchesByTexture[image] then
+        batchesByTexture[image] = {vertices = {}, count = 0}
+    end
+    local batch = batchesByTexture[image]
+
+    -- Calculate perpendicular vector for line thickness
+    -- Use camera position to make the quad face the camera (billboard-ish)
+    local dx = p1[1] - p0[1]
+    local dy = p1[2] - p0[2]
+    local dz = p1[3] - p0[3]
+
+    -- Get vector from camera to line midpoint
+    local midX = (p0[1] + p1[1]) * 0.5
+    local midY = (p0[2] + p1[2]) * 0.5
+    local midZ = (p0[3] + p1[3]) * 0.5
+
+    local camX = currentCamera and currentCamera.x or 0
+    local camY = currentCamera and currentCamera.y or 0
+    local camZ = currentCamera and currentCamera.z or 0
+
+    local toCamera = {midX - camX, midY - camY, midZ - camZ}
+
+    -- Cross product of line direction and camera direction gives perpendicular
+    local perpX = dy * toCamera[3] - dz * toCamera[2]
+    local perpY = dz * toCamera[1] - dx * toCamera[3]
+    local perpZ = dx * toCamera[2] - dy * toCamera[1]
+
+    -- Normalize and scale by thickness
+    local perpLen = math.sqrt(perpX * perpX + perpY * perpY + perpZ * perpZ)
+    if perpLen < 0.0001 then
+        -- Line points directly at camera, use arbitrary perpendicular
+        perpX, perpY, perpZ = thickness, 0, 0
+    else
+        local scale = thickness / perpLen
+        perpX, perpY, perpZ = perpX * scale, perpY * scale, perpZ * scale
+    end
+
+    -- Create quad vertices (two triangles)
+    local v0 = {p0[1] - perpX, p0[2] - perpY, p0[3] - perpZ}
+    local v1 = {p0[1] + perpX, p0[2] + perpY, p0[3] + perpZ}
+    local v2 = {p1[1] + perpX, p1[2] + perpY, p1[3] + perpZ}
+    local v3 = {p1[1] - perpX, p1[2] - perpY, p1[3] - perpZ}
+
+    -- Add two triangles for the quad
+    addColoredTriangleToBatch(batch, v0, v1, v2, r, g, b)
+    addColoredTriangleToBatch(batch, v0, v2, v3, r, g, b)
+    stats.trianglesDrawn = stats.trianglesDrawn + 2
+end
+
 -- Draw a 3D line (uses CPU transform since lines are few)
 function renderer_gpu.drawLine3D(p0, p1, r, g, b, skipZBuffer)
     if not currentProjectionMatrix then

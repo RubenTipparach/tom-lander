@@ -20,6 +20,9 @@ local Trees = require("trees")
 local Skydome = require("skydome")
 local profile = require("profiler")
 local HUD = require("hud")
+local Mission = require("mission")
+local Missions = require("missions")
+local Weather = require("weather")
 
 local flight_scene = {}
 
@@ -43,7 +46,12 @@ local mouse_camera_enabled = false  -- Toggle with right mouse button
 
 -- World objects
 local buildings = {}
+local building_configs = {}  -- Store building configs for missions
 local cargo_items = {}
+
+-- Game mode and mission
+local game_mode = "arcade"  -- "arcade" or "simulation"
+local current_mission_num = nil  -- nil = free flight
 
 -- Fonts
 local thrusterFont = nil
@@ -130,7 +138,7 @@ function flight_scene.load()
     })
 
     -- Create buildings (matching Picotron exactly)
-    buildings = Building.create_city({
+    building_configs = {
         {x = -10, z = 5, width = 1.5, depth = 1.5, height = 8, side_sprite = Constants.SPRITE_BUILDING_SIDE},      -- Tall tower
         {x = -5, z = 4, width = 1.2, depth = 1.2, height = 6, side_sprite = Constants.SPRITE_BUILDING_SIDE_ALT},   -- Medium tower
         {x = 0, z = 5, width = 1.0, depth = 1.0, height = 5, side_sprite = Constants.SPRITE_BUILDING_SIDE},        -- Shorter building
@@ -140,18 +148,37 @@ function flight_scene.load()
         {x = 3, z = 14, width = 1.2, depth = 1.2, height = 9, side_sprite = Constants.SPRITE_BUILDING_SIDE},       -- Tallest skyscraper
         {x = 9, z = 12, width = 1.0, depth = 1.0, height = 3, side_sprite = Constants.SPRITE_BUILDING_SIDE_ALT},   -- Small building
         {x = -6, z = 18, width = 1.5, depth = 1.2, height = 6, side_sprite = Constants.SPRITE_BUILDING_SIDE},      -- Medium building
-        {x = 2, z = 20, width = 1.1, depth = 1.4, height = 7, side_sprite = Constants.SPRITE_BUILDING_SIDE_ALT},   -- Tall building
-    }, Heightmap)
+        {x = 2, z = 20, width = 1.1, depth = 1.4, height = 7, side_sprite = Constants.SPRITE_BUILDING_SIDE_ALT},   -- Tall building (Command Tower for mission 3)
+    }
+    buildings = Building.create_city(building_configs, Heightmap)
 
-    -- Create cargo items
+    -- Set up mission system references
+    Mission.LandingPads = LandingPads
+    Missions.buildings = buildings
+    Missions.building_configs = building_configs
+
+    -- Get game mode and mission from menu
+    local menu = require("menu")
+    game_mode = menu.game_mode or "arcade"
+    current_mission_num = menu.selected_mission  -- nil for free flight
+
+    -- Create cargo items (only for free flight mode)
     cargo_items = {}
-    table.insert(cargo_items, Cargo.create({
-        id = 1,
-        x = 15,
-        z = 10,
-        base_y = Heightmap.get_height(15, 10),
-        scale = 0.5
-    }))
+    if not current_mission_num then
+        -- Free flight mode - spawn a test cargo
+        table.insert(cargo_items, Cargo.create({
+            id = 1,
+            x = 15,
+            z = 10,
+            base_y = Heightmap.get_height(15, 10),
+            scale = 0.5
+        }))
+    end
+
+    -- Start mission if selected
+    if current_mission_num then
+        Missions.start(current_mission_num, Mission)
+    end
 
     -- Create camera (matching Picotron initial state)
     -- Camera starts at ship position, offset is applied during rendering
@@ -178,8 +205,9 @@ function flight_scene.load()
     -- Initialize HUD with renderer reference
     HUD.init(renderer)
 
-    -- Enable fog (using config values matching Picotron)
-    renderer.setFog(true, config.FOG_START_DISTANCE, config.RENDER_DISTANCE,
+    -- Enable fog (using config values matching Picotron, or weather values if enabled)
+    local fog_start, fog_max = Weather.get_fog_settings()
+    renderer.setFog(true, fog_start, fog_max,
         config.FOG_COLOR[1], config.FOG_COLOR[2], config.FOG_COLOR[3])
 
     -- Reset renderer state (menu may have changed these)
@@ -303,15 +331,25 @@ function flight_scene.update(dt)
     end
 
     -- Update cargo (pass quaternion orientation for gimbal-lock-free rotation)
-    for _, cargo in ipairs(cargo_items) do
-        Cargo.update(cargo, dt, ship.x, ship.y, ship.z, ship.orientation)
+    -- Only update free-flight cargo if no mission is active
+    if not Mission.is_active() then
+        for _, cargo in ipairs(cargo_items) do
+            Cargo.update(cargo, dt, ship.x, ship.y, ship.z, ship.orientation)
+        end
     end
 
-    -- Check for landing
-    local landing_pad = LandingPads.check_landing(ship.x, ship.y, ship.z, ship.vy)
-    if landing_pad and Cargo.is_attached(cargo_items[1]) then
+    -- Check for landing (returns the pad the ship is currently on, or nil)
+    local current_landing_pad = LandingPads.check_landing(ship.x, ship.y, ship.z, ship.vy)
+
+    -- Update mission system
+    if Mission.is_active() then
+        Mission.update(dt, ship, current_landing_pad)
+    end
+
+    -- Free flight cargo delivery
+    if not Mission.is_active() and current_landing_pad and cargo_items[1] and Cargo.is_attached(cargo_items[1]) then
         Cargo.deliver(cargo_items[1])
-        print("Cargo delivered to " .. landing_pad.name .. "!")
+        print("Cargo delivered to " .. current_landing_pad.name .. "!")
     end
 
     -- Spawn smoke particles when thrusters are active
@@ -333,6 +371,10 @@ function flight_scene.update(dt)
 
     -- Update speed lines (pass ship position and velocity)
     speed_lines:update(dt, ship.x, ship.y, ship.z, ship.vx, ship.vy, ship.vz)
+
+    -- Update weather system (rain particles, wind changes, lightning)
+    Weather.update(dt, cam.pos.x, cam.pos.y, cam.pos.z, ship.vx, ship.vy, ship.vz)
+    Weather.apply_wind(ship, ship.y, is_grounded)
 
     -- Auto-level with shift key
     if love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
@@ -391,6 +433,19 @@ end
 
 function flight_scene.draw()
     profile("clear")
+
+    -- Update fog based on weather state (narrower visibility during storms)
+    local fog_start, fog_max = Weather.get_fog_settings()
+    local fog_color = Weather.is_enabled() and config.WEATHER_FOG_COLOR or config.FOG_COLOR
+    renderer.setFog(true, fog_start, fog_max, fog_color[1], fog_color[2], fog_color[3])
+
+    -- Set clear color to match fog (darker during weather)
+    if Weather.is_enabled() then
+        renderer.setClearColor(config.WEATHER_FOG_COLOR[1], config.WEATHER_FOG_COLOR[2], config.WEATHER_FOG_COLOR[3])
+    else
+        renderer.setClearColor(162, 136, 121)  -- Default clear color
+    end
+
     -- Set clear color and clear buffers
     renderer.clearBuffers()
 
@@ -400,8 +455,9 @@ function flight_scene.draw()
     profile("clear")
 
     -- Draw skydome FIRST (always behind everything, follows camera)
+    -- Use overcast sky texture during weather
     profile(" skydome")
-    Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+    Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, Weather.is_enabled())
     profile(" skydome")
 
     -- Draw terrain (pass camera yaw for frustum culling)
@@ -426,10 +482,14 @@ function flight_scene.draw()
     LandingPads.draw_all(renderer, cam.pos.x, cam.pos.z)
     profile(" pads")
 
-    -- Draw cargo
+    -- Draw cargo (mission cargo or free-flight cargo)
     profile(" cargo")
-    for _, cargo in ipairs(cargo_items) do
-        Cargo.draw(cargo, renderer, cam.pos.x, cam.pos.z)
+    if Mission.is_active() then
+        Mission.draw_cargo(renderer, cam.pos.x, cam.pos.z)
+    else
+        for _, cargo in ipairs(cargo_items) do
+            Cargo.draw(cargo, renderer, cam.pos.x, cam.pos.z)
+        end
     end
     profile(" cargo")
 
@@ -441,24 +501,41 @@ function flight_scene.draw()
     -- Draw smoke particles (disabled - billboard rendering needs fixing)
     -- smoke_system:draw(renderer, cam)
 
-    -- Draw speed lines (depth-tested 3D lines)
-    profile(" speedlines")
-    speed_lines:draw(renderer, cam)
-    profile(" speedlines")
+    -- Draw rain as depth-tested 3D geometry (MUST be before flush3D for proper occlusion)
+    Weather.draw_rain(renderer, cam, ship.vx, ship.vy, ship.vz)
 
-    -- Flush 3D geometry before drawing 2D UI (so UI appears on top)
+    -- Flush 3D geometry (includes rain, terrain, ship - all depth tested together)
     renderer.flush3D()
 
-    -- Draw minimap
+    -- Draw 3D guide arrow for missions (anchored to camera pivot, depth tested against geometry)
+    if Mission.is_active() then
+        Mission.draw_guide_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+    end
+
+    -- Draw wind direction arrow (blue, length based on wind strength)
+    Weather.draw_wind_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, ship.y)
+
+    -- Draw speed lines (depth-tested 3D lines) - disabled during weather (rain acts as speed lines)
+    if not Weather.is_enabled() then
+        profile(" speedlines")
+        speed_lines:draw(renderer, cam)
+        profile(" speedlines")
+    end
+
+    -- Draw minimap (pass mission cargo if active, otherwise free-flight cargo)
     profile(" minimap")
-    Minimap.draw(renderer, Heightmap, ship, LandingPads, cargo_items)
+    local minimap_cargo = Mission.is_active() and Mission.cargo_objects or cargo_items
+    local minimap_target = Mission.is_active() and Mission.get_target() or nil
+    Minimap.draw(renderer, Heightmap, ship, LandingPads, minimap_cargo, minimap_target)
     profile(" minimap")
 
     -- Draw HUD to software buffer (before blit)
     profile(" hud")
-    HUD.draw(ship, cam, {
-        game_mode = "arcade",
-        mission = {
+    local mission_data
+    if Mission.is_active() then
+        mission_data = Mission.get_hud_data()
+    else
+        mission_data = {
             name = "FREE FLIGHT",
             objectives = {
                 "Explore the terrain",
@@ -466,8 +543,12 @@ function flight_scene.draw()
                 "Collect cargo and deliver",
                 "[Tab] Pause  [R] Reset"
             }
-        },
-        mission_target = nil,  -- TODO: add mission target when mission system exists
+        }
+    end
+    HUD.draw(ship, cam, {
+        game_mode = game_mode,
+        mission = mission_data,
+        mission_target = Mission.get_target(),
         current_location = nil,  -- TODO: detect current landing pad/building
         is_repairing = false  -- TODO: add repair logic
     })
@@ -476,15 +557,27 @@ function flight_scene.draw()
     profile("present")
     -- Present the rendered frame to screen
     renderer.present()
+
+    -- Draw lightning flash overlay (after present, directly to screen)
+    Weather.draw_lightning_flash()
     profile("present")
 end
 
 function flight_scene.keypressed(key)
+    -- Handle mission complete - Q to return to menu
+    if Mission.is_complete() and key == "q" then
+        Mission.reset()
+        local scene_manager = require("scene_manager")
+        scene_manager.switch("menu")
+        return
+    end
+
     -- Handle pause menu actions first
     if HUD.is_paused() then
         if key == "q" then
             -- Return to menu from pause
             HUD.close_pause()
+            Mission.reset()
             local scene_manager = require("scene_manager")
             scene_manager.switch("menu")
             return
@@ -508,7 +601,13 @@ function flight_scene.keypressed(key)
         cam.pitch = 0
         cam.yaw = 0
 
-        -- Reset cargo
+        -- Reset mission if active
+        if Mission.is_active() and current_mission_num then
+            Mission.reset()
+            Missions.start(current_mission_num, Mission)
+        end
+
+        -- Reset free-flight cargo
         for _, cargo in ipairs(cargo_items) do
             cargo.state = "idle"
             cargo.x = 15

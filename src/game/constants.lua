@@ -14,6 +14,7 @@ Constants.SPRITE_LANDING_PAD = 8
 Constants.SPRITE_SHIP = 9
 Constants.SPRITE_SHIP_DAMAGE = 10
 Constants.SPRITE_SKYBOX = 11
+Constants.SPRITE_SKYBOX_OVERCAST = 23  -- Cloudy/overcast sky for weather
 Constants.SPRITE_WATER = 12
 Constants.SPRITE_WATER2 = 13
 Constants.SPRITE_GRASS = 15  -- Grass texture for elevation 3+ (32x32)

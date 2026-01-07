@@ -62,8 +62,10 @@ end
 -- Draw skydome centered at camera position
 -- IMPORTANT: This should be called FIRST before other geometry
 -- Uses dedicated sky shader (no fog) and no depth test
-function Skydome.draw(renderer, cam_x, cam_y, cam_z)
-    local texData = Constants.getTextureData(Constants.SPRITE_SKYBOX)
+-- use_overcast: if true, uses the overcast/cloudy sky texture for weather
+function Skydome.draw(renderer, cam_x, cam_y, cam_z, use_overcast)
+    local sprite_id = use_overcast and Constants.SPRITE_SKYBOX_OVERCAST or Constants.SPRITE_SKYBOX
+    local texData = Constants.getTextureData(sprite_id)
     if not texData then return end
 
     -- Draw each face of the skydome, offset to camera position

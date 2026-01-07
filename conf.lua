@@ -10,6 +10,6 @@ function love.conf(t)
 
     -- This runs before love.load, so we set package.path here
     if love.filesystem then
-        love.filesystem.setRequirePath("src/?.lua;src/?/init.lua;src/graphics/?.lua;src/game/?.lua;src/utils/?.lua;?.lua;?/init.lua")
+        love.filesystem.setRequirePath("src/?.lua;src/?/init.lua;src/graphics/?.lua;src/game/?.lua;src/utils/?.lua;src/lib/?.lua;?.lua;?/init.lua")
     end
 end
