@@ -309,8 +309,8 @@ function flight_scene.update(dt)
     end
 
     -- Building collision (matching Picotron)
-    local ship_half_width = 0.5  -- Ship collision half-width
-    local ship_half_depth = 0.5  -- Ship collision half-depth
+    local ship_half_width = config.VTOL_COLLISION_WIDTH
+    local ship_half_depth = config.VTOL_COLLISION_DEPTH
 
     for _, building in ipairs(buildings) do
         local half_width = building.width / 2
@@ -320,10 +320,13 @@ function flight_scene.update(dt)
         local building_bottom = building.y
 
         -- Check if ship's bounding box overlaps with building
+        local ship_half_height = config.VTOL_COLLISION_HEIGHT
+        local ship_bottom = ship.y - ship_half_height + config.VTOL_COLLISION_OFFSET_Y
+        local ship_top = ship.y + ship_half_height + config.VTOL_COLLISION_OFFSET_Y
         if Collision.box_overlap(ship.x, ship.z, ship_half_width, ship_half_depth,
                                   building.x, building.z, half_width, half_depth) then
             -- Ship is horizontally inside building bounds
-            if ship.y > building_bottom and ship.y < building_top then
+            if ship_bottom < building_top and ship_top > building_bottom then
                 -- Side collision: ship is inside building volume - push out
                 ship.x, ship.z = Collision.push_out_of_box(
                     ship.x, ship.z,
@@ -340,7 +343,7 @@ function flight_scene.update(dt)
                 -- Kill velocity when hitting side
                 ship.vx = ship.vx * 0.5
                 ship.vz = ship.vz * 0.5
-            elseif ship.y >= building_top then
+            elseif ship_bottom >= building_top then
                 -- Above building - rooftop is a landing surface
                 if building_top > ground_height then
                     ground_height = building_top
@@ -350,7 +353,7 @@ function flight_scene.update(dt)
     end
 
     -- Apply ground collision
-    local ship_ground_offset = 0.5
+    local ship_ground_offset = config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y
     local landing_height = ground_height + ship_ground_offset
 
     if ship.y < landing_height then

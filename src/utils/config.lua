@@ -100,6 +100,12 @@ config.VTOL_GRAVITY = -0.005         -- Gravity force
 config.VTOL_DAMPING = 0.95           -- Linear velocity damping
 config.VTOL_ANGULAR_DAMPING = 0.95   -- Angular velocity damping
 
+-- Collision bounds (axis-aligned bounding box half-extents)
+config.VTOL_COLLISION_WIDTH = 1.0    -- Half-width (X axis)
+config.VTOL_COLLISION_HEIGHT = 0.35   -- Half-height (Y axis)
+config.VTOL_COLLISION_DEPTH = 1.0    -- Half-depth (Z axis)
+config.VTOL_COLLISION_OFFSET_Y = 0.0 -- Vertical offset of collision box center
+
 -- ===========================================
 -- THRUSTER FLAME SETTINGS
 -- ===========================================
