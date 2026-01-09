@@ -17,6 +17,13 @@ config.GOURAUD_SHADING = true   -- Set to true for per-vertex lighting (smooth),
 config.LIGHT_DIRECTION = {-0.866, 0.5, 0.0}  -- Directional light from 60° up, East (normalized automatically)
 config.LIGHT_INTENSITY = 1.0               -- Directional light brightness (0-1)
 config.AMBIENT_LIGHT = 0.55                -- Ambient light level (0-1)
+config.USE_PALETTE_SHADOWS = true          -- Use palette-based shadows instead of RGB darkening
+config.DITHER_PALETTE_SHADOWS = true       -- Dither between shadow levels for smooth transitions
+config.SHADOW_LEVELS = 8                   -- Number of shadow levels (2-8, more = smoother)
+config.SHADOW_BRIGHTNESS_MIN = 0.3         -- Brightness below this uses darkest shadow
+config.SHADOW_BRIGHTNESS_MAX = 0.95        -- Brightness above this uses original color
+config.SHADOW_DITHER_RANGE = 0.5           -- Range of blend values where dithering occurs (0.0-1.0)
+                                           -- 0.0 = hard cutoff (no dither), 1.0 = dither entire transition
 
 -- ===========================================
 -- MENU SETTINGS
@@ -98,6 +105,17 @@ config.VTOL_ANGULAR_DAMPING = 0.95   -- Angular velocity damping
 -- ===========================================
 config.FLAME_BRIGHTNESS = 1.0        -- Flame brightness (1.0 = emissive, no shading)
 config.FLAME_ALPHA = 0.5             -- Flame transparency (0-1, 0.5 = 50% transparent)
+
+-- ===========================================
+-- CAMERA SETTINGS
+-- ===========================================
+config.CAMERA_DISTANCE_MIN = -3           -- Min camera distance at low speed (negative = behind ship)
+config.CAMERA_DISTANCE_MAX = -8           -- Max camera distance at high speed
+config.CAMERA_DISTANCE_SPEED_MAX = 0.3    -- Speed at which camera reaches max distance
+config.CAMERA_ZOOM_SPEED = 0.01            -- How fast camera distance adjusts (lerp speed)
+config.CAMERA_LERP_SPEED = 0.2            -- How fast camera catches up to ship
+config.CAMERA_ROTATION_SPEED = 0.03       -- Camera rotation speed per frame
+config.CAMERA_MOUSE_SENSITIVITY = 0.003   -- Mouse sensitivity for camera rotation
 
 -- ===========================================
 -- GUIDE ARROW SETTINGS

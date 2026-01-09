@@ -4,6 +4,7 @@
 
 local config = require("config")
 local fonts = require("fonts")
+local Palette = require("game.palette")
 
 local renderer_gpu = {}
 
@@ -49,6 +50,9 @@ local fogColor = {162/255, 136/255, 121/255}  -- Same as clear color
 -- Dithering toggle
 local ditherEnabled = true
 
+-- Palette shadow lookup texture (32x8: 32 colors × 8 shadow levels)
+local paletteShadowTexture = nil
+
 -- Stats for profiler
 local stats = {
     trianglesDrawn = 0,
@@ -80,6 +84,59 @@ local vertexFormat3D = {
 -- Persistent mesh for batched drawing (reused each frame)
 local batchMesh = nil
 
+-- Create palette shadow lookup texture
+-- Returns a 32x8 texture where each pixel (x,y) contains the RGB color
+-- for palette index x at shadow level y
+local function createPaletteShadowTexture()
+    print("Creating palette shadow lookup texture...")
+    local width = 32   -- 32 palette colors
+    local height = 8   -- 8 shadow levels
+
+    -- Try to load from file first
+    local filename = "assets/palette_shadow_lookup.png"
+    if love.filesystem.getInfo(filename) then
+        print("Loading palette shadow lookup from " .. filename)
+        local texture = love.graphics.newImage(filename)
+        texture:setFilter("nearest", "nearest")
+        texture:setWrap("clamp", "clamp")
+        return texture
+    end
+
+    -- Generate if not found
+    print("Generating palette shadow lookup texture...")
+    local imageData = love.image.newImageData(width, height)
+
+    -- Fill with palette shadow colors
+    for paletteIndex = 0, 31 do
+        for shadowLevel = 0, 7 do
+            -- Get the shadow color for this palette index at this level
+            local shadowIndex = Palette.getShadowLevel(paletteIndex, shadowLevel)
+            local rgb = Palette.getColor(shadowIndex)
+
+            -- Set pixel (x=paletteIndex, y=shadowLevel)
+            imageData:setPixel(paletteIndex, shadowLevel, rgb[1]/255, rgb[2]/255, rgb[3]/255, 1.0)
+        end
+    end
+
+    -- Try to save as PNG for debugging (in save directory)
+    local saveOk, saveErr = pcall(function()
+        imageData:encode("png", filename)
+    end)
+    if saveOk then
+        print("Palette shadow lookup texture saved to " .. filename)
+    else
+        print("Note: Could not save to " .. filename .. " - " .. tostring(saveErr))
+    end
+
+    -- Create texture from ImageData
+    local texture = love.graphics.newImage(imageData)
+    texture:setFilter("nearest", "nearest")  -- No interpolation for lookup table
+    texture:setWrap("clamp", "clamp")       -- Clamp to edges
+
+    print("Palette shadow lookup texture created: " .. width .. "x" .. height)
+    return texture
+end
+
 -- Initialize the renderer
 function renderer_gpu.init(width, height)
     RENDER_WIDTH = width or RENDER_WIDTH
@@ -91,6 +148,9 @@ function renderer_gpu.init(width, height)
 
     -- Create depth buffer
     depthCanvas = love.graphics.newCanvas(RENDER_WIDTH, RENDER_HEIGHT, {format = "depth24", readable = false})
+
+    -- Create palette shadow lookup texture
+    paletteShadowTexture = createPaletteShadowTexture()
 
     -- Load 3D shader (GPU-side MVP transformation)
     local shaderPath = "src/graphics/shaders/"
@@ -628,13 +688,21 @@ function renderer_gpu.flush3D()
         print("WARNING: Matrices not set!")
     end
 
-    shader3D:send("u_ditherEnabled", ditherEnabled)
+    -- Send fog uniforms (with pcall to skip if optimized out)
+    pcall(function() shader3D:send("u_fogEnabled", fogEnabled and 1.0 or 0.0) end)
+    pcall(function() shader3D:send("u_fogNear", fogNear) end)
+    pcall(function() shader3D:send("u_fogFar", fogFar) end)
+    pcall(function() shader3D:send("u_fogColor", fogColor) end)
 
-    -- Send fog uniforms
-    shader3D:send("u_fogEnabled", fogEnabled and 1.0 or 0.0)
-    shader3D:send("u_fogNear", fogNear)
-    shader3D:send("u_fogFar", fogFar)
-    shader3D:send("u_fogColor", fogColor)
+    -- Send palette-based shadow uniforms (if enabled)
+    if config.USE_PALETTE_SHADOWS then
+        renderer_gpu.sendPaletteUniforms(shader3D)
+        pcall(function() shader3D:send("u_ditherPaletteShadows", config.DITHER_PALETTE_SHADOWS and 1.0 or 0.0) end)
+        pcall(function() shader3D:send("u_shadowBrightnessMin", config.SHADOW_BRIGHTNESS_MIN or 0.3) end)
+        pcall(function() shader3D:send("u_shadowBrightnessMax", config.SHADOW_BRIGHTNESS_MAX or 0.95) end)
+        pcall(function() shader3D:send("u_shadowDitherRange", config.SHADOW_DITHER_RANGE or 0.5) end)
+    end
+    pcall(function() shader3D:send("u_usePaletteShadows", config.USE_PALETTE_SHADOWS and 1.0 or 0.0) end)
 
     -- Enable backface culling (use "front" because shader Y-flip reverses winding order)
     love.graphics.setMeshCullMode("front")
@@ -800,6 +868,16 @@ function renderer_gpu.flushTerrain()
     shaderTerrain:send("u_fogNear", fogNear)
     shaderTerrain:send("u_fogFar", fogFar)
     shaderTerrain:send("u_fogColor", fogColor)
+
+    -- Send palette-based shadow uniforms (if enabled)
+    if config.USE_PALETTE_SHADOWS then
+        renderer_gpu.sendPaletteUniforms(shaderTerrain)
+        shaderTerrain:send("u_ditherPaletteShadows", config.DITHER_PALETTE_SHADOWS and 1.0 or 0.0)
+        shaderTerrain:send("u_shadowBrightnessMin", config.SHADOW_BRIGHTNESS_MIN or 0.3)
+        shaderTerrain:send("u_shadowBrightnessMax", config.SHADOW_BRIGHTNESS_MAX or 0.95)
+        shaderTerrain:send("u_shadowDitherRange", config.SHADOW_DITHER_RANGE or 0.5)
+    end
+    shaderTerrain:send("u_usePaletteShadows", config.USE_PALETTE_SHADOWS and 1.0 or 0.0)
 
     -- Enable backface culling for terrain (use "front" because shader Y-flip reverses winding order)
     love.graphics.setMeshCullMode("front")
@@ -972,6 +1050,34 @@ function renderer_gpu.calculateFaceNormal(p1, p2, p3)
     end
 
     return 0, 1, 0  -- Default upward normal
+end
+
+-- Cache for palette uniforms
+local paletteUniformsCache = nil
+
+-- Send palette and shadow map data to shader
+local paletteSent = false
+function renderer_gpu.sendPaletteUniforms(shader)
+    -- Simply send the palette shadow lookup texture to the shader
+    if paletteShadowTexture then
+        local ok, err = pcall(function()
+            -- Send texture to shader
+            shader:send("u_paletteShadowLookup", paletteShadowTexture)
+        end)
+        if not ok then
+            print("ERROR: Could not send palette shadow lookup texture: " .. tostring(err))
+            -- Fallback: disable palette shadows
+            config.USE_PALETTE_SHADOWS = false
+        elseif not paletteSent then
+            print("Palette shadow lookup texture sent to shader successfully")
+            print("  Texture dimensions: " .. paletteShadowTexture:getWidth() .. "x" .. paletteShadowTexture:getHeight())
+            print("  Format: " .. paletteShadowTexture:getFormat())
+            paletteSent = true
+        end
+    else
+        print("WARNING: paletteShadowTexture is nil, cannot send to shader")
+        config.USE_PALETTE_SHADOWS = false
+    end
 end
 
 -- Draw a mesh with Gouraud shading (per-vertex lighting)

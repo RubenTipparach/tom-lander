@@ -184,6 +184,10 @@ function Ship:update_thrusters()
     local s_pressed = love.keyboard.isDown("s") or love.keyboard.isDown("k")
     local d_pressed = love.keyboard.isDown("d") or love.keyboard.isDown("l")
 
+    -- Yaw controls (Q = yaw left, E = yaw right)
+    local q_pressed = love.keyboard.isDown("q")
+    local e_pressed = love.keyboard.isDown("e")
+
     -- Arcade mode special keys
     local space_pressed = love.keyboard.isDown("space")
     local n_pressed = love.keyboard.isDown("n")
@@ -251,6 +255,16 @@ function Ship:update(dt)
             self.local_vpitch = self.local_vpitch + thruster.z * gameConfig.VTOL_TORQUE_PITCH * timeScale
             self.local_vroll = self.local_vroll + (-thruster.x) * gameConfig.VTOL_TORQUE_ROLL * timeScale
         end
+    end
+
+    -- Apply yaw control from Q/E keys (scaled by dt)
+    -- Q = yaw left (positive), E = yaw right (negative)
+    local yaw_torque = gameConfig.VTOL_TORQUE_ROLL  -- Use same torque as roll
+    if love.keyboard.isDown("q") then
+        self.local_vyaw = self.local_vyaw + yaw_torque * timeScale
+    end
+    if love.keyboard.isDown("e") then
+        self.local_vyaw = self.local_vyaw - yaw_torque * timeScale
     end
 
     -- Update position (scaled by dt)

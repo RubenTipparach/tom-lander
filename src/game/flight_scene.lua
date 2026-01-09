@@ -40,10 +40,11 @@ local follow_camera = true
 
 -- Camera settings
 -- Note: Picotron runs at 60fps and applies lerp per-frame
-local camera_lerp_speed = 0.1  -- How fast camera catches up
-local cam_dist = -5 -- Positive = camera behind ship (matching Picotron)
-local cam_rot_speed = 0.03  -- Camera rotation speed per frame
-local mouse_sensitivity = 0.003  -- Mouse sensitivity for camera rotation
+local camera_lerp_speed = config.CAMERA_LERP_SPEED
+local camera_zoom_speed = config.CAMERA_ZOOM_SPEED
+local cam_dist = config.CAMERA_DISTANCE_MIN  -- Will be adjusted based on speed
+local cam_rot_speed = config.CAMERA_ROTATION_SPEED
+local mouse_sensitivity = config.CAMERA_MOUSE_SENSITIVITY
 local last_mouse_x, last_mouse_y = 0, 0
 local mouse_camera_enabled = false  -- Toggle with right mouse button
 
@@ -524,6 +525,13 @@ function flight_scene.update(dt)
     local target_x = ship.x
     local target_y = ship.y
     local target_z = ship.z
+
+    -- Update camera distance based on ship speed (with smooth lerp)
+    local ship_speed = math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy + ship.vz * ship.vz)
+    local speed_factor = math.min(ship_speed / config.CAMERA_DISTANCE_SPEED_MAX, 1.0)
+    local target_cam_dist = config.CAMERA_DISTANCE_MIN + (config.CAMERA_DISTANCE_MAX - config.CAMERA_DISTANCE_MIN) * speed_factor
+    local zoomLerpFactor = 1.0 - math.pow(1.0 - camera_zoom_speed, timeScale)
+    cam_dist = cam_dist + (target_cam_dist - cam_dist) * zoomLerpFactor
 
     -- Frame-rate independent lerp: 1 - (1-speed)^(dt*60)
     local lerpFactor = 1.0 - math.pow(1.0 - camera_lerp_speed, timeScale)

@@ -82,4 +82,93 @@ function Palette.getColor(index)
     return Palette.colors[index] or Palette.colors[0]
 end
 
+-- Multi-level shadow mapping - 8 levels from brightest to darkest
+-- Each color has a progression of darker shades
+-- Level 0 = original color, Level 7 = darkest shadow
+Palette.shadowLevels = {
+    -- Black (0) - stays black at all levels
+    [0] = {0, 0, 0, 0, 0, 0, 0, 0},
+    -- Dark blue (1) - to black
+    [1] = {1, 1, 1, 0, 0, 0, 0, 0},
+    -- Dark purple (2) - through darker purple to black
+    [2] = {2, 2, 21, 21, 1, 0, 0, 0},
+    -- Dark green (3) - through dark teal to black
+    [3] = {3, 3, 19, 19, 1, 1, 0, 0},
+    -- Brown (4) - through dark brown to black
+    [4] = {4, 4, 20, 20, 21, 1, 0, 0},
+    -- Dark gray (5) - through darker purple to black
+    [5] = {5, 5, 21, 21, 1, 0, 0, 0},
+    -- Light gray (6) - through mid gray, dark gray to black
+    [6] = {6, 13, 13, 5, 5, 21, 1, 0},
+    -- White (7) - through light gray, mid gray, dark to black
+    [7] = {7, 6, 6, 13, 5, 5, 1, 0},
+    -- Red (8) - through dark red, dark purple to black
+    [8] = {8, 8, 24, 24, 2, 21, 1, 0},
+    -- Orange (9) - through dark orange, brown to black
+    [9] = {9, 9, 25, 25, 4, 20, 21, 0},
+    -- Yellow (10) - through orange, dark orange, brown to black
+    [10] = {10, 10, 9, 25, 4, 20, 1, 0},
+    -- Green (11) - through dark green, dark teal to black
+    [11] = {11, 11, 27, 27, 3, 19, 1, 0},
+    -- Blue (12) - through dark blue to black
+    [12] = {12, 12, 16, 16, 1, 1, 0, 0},
+    -- Mid gray (13) - through dark gray, darker purple to black
+    [13] = {13, 13, 5, 5, 21, 1, 0, 0},
+    -- Pink (14) - through red, dark red to black
+    [14] = {14, 14, 8, 8, 24, 2, 1, 0},
+    -- Peach (15) - through brown, dark brown to black
+    [15] = {15, 15, 4, 4, 20, 21, 1, 0},
+    -- Mid blue (16) - through dark blue to black
+    [16] = {16, 16, 1, 1, 0, 0, 0, 0},
+    -- Teal (17) - through dark teal, dark blue to black
+    [17] = {17, 17, 19, 19, 1, 1, 0, 0},
+    -- Purple (18) - through dark purple to black
+    [18] = {18, 18, 2, 2, 21, 1, 0, 0},
+    -- Dark teal (19) - through dark blue to black
+    [19] = {19, 19, 1, 1, 0, 0, 0, 0},
+    -- Dark brown (20) - through darker purple to black
+    [20] = {20, 20, 21, 21, 1, 0, 0, 0},
+    -- Darker purple (21) - to black
+    [21] = {21, 21, 1, 0, 0, 0, 0, 0},
+    -- Tan (22) - through dark gray to black
+    [22] = {22, 22, 5, 5, 21, 1, 0, 0},
+    -- Light pink (23) - through pink, red to black
+    [23] = {23, 23, 14, 14, 8, 24, 2, 0},
+    -- Dark red (24) - through dark purple to black
+    [24] = {24, 24, 2, 2, 21, 1, 0, 0},
+    -- Dark orange (25) - through brown to black
+    [25] = {25, 25, 4, 4, 20, 21, 1, 0},
+    -- Light green (26) - through green, dark green to black
+    [26] = {26, 26, 11, 11, 27, 3, 19, 0},
+    -- Dark green (27) - through darker green, dark teal to black
+    [27] = {27, 27, 3, 3, 19, 1, 0, 0},
+    -- Light blue (28) - through blue, dark blue to black
+    [28] = {28, 28, 12, 12, 16, 1, 0, 0},
+    -- Light purple (29) - through mid gray to black
+    [29] = {29, 29, 13, 13, 5, 21, 1, 0},
+    -- Magenta (30) - through dark red, dark purple to black
+    [30] = {30, 30, 24, 24, 2, 21, 1, 0},
+    -- Light orange (31) - through red, dark red to black
+    [31] = {31, 31, 8, 8, 24, 2, 1, 0},
+}
+
+-- Get shadow color index at a specific level (0-7)
+function Palette.getShadowLevel(paletteIndex, level)
+    level = math.max(0, math.min(7, math.floor(level)))
+    local levels = Palette.shadowLevels[paletteIndex]
+    if not levels then return 0 end
+    return levels[level + 1] or 0  -- +1 because Lua tables are 1-indexed
+end
+
+-- Legacy function for single-level shadows (uses level 4, mid-darkness)
+function Palette.getShadowIndex(index)
+    return Palette.getShadowLevel(index, 4)
+end
+
+-- Get shadow RGB color for a given palette index and level
+function Palette.getShadowColor(index, level)
+    local shadowIndex = Palette.getShadowLevel(index, level or 4)
+    return Palette.getColor(shadowIndex)
+end
+
 return Palette

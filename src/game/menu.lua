@@ -740,10 +740,10 @@ function menu.draw()
             menu.draw_sphere(menu.planet, PLANET_PITCH, PLANET_YAW + menu.planet.rotation, PLANET_ROLL, planetTexData)
         end
 
-        -- Draw clouds on top (larger sphere, with 50% dithering for transparency)
+        -- Draw clouds on top (larger sphere, unlit with 50% dithering for transparency)
         local cloudTexData = Constants.getTextureData(Constants.SPRITE_CLOUDS)
         if cloudTexData then
-            menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData, 0.5)
+            menu.draw_sphere(menu.clouds, PLANET_PITCH, PLANET_YAW + menu.clouds.rotation, PLANET_ROLL, cloudTexData, 1.0, 0.5)
         end
 
         -- Draw ship with thrusters
@@ -815,7 +815,7 @@ end
 
 -- Draw sphere mesh
 -- brightness: optional dithering value (0-1), nil = no dithering
-function menu.draw_sphere(sphere, pitch, yaw, roll, texData, brightness)
+function menu.draw_sphere(sphere, pitch, yaw, roll, texData, brightness, alpha)
     -- Build model matrix for the sphere (convert Picotron 0-1 rotations to radians)
     -- For self-rotation: M = T * R (rotate around center, then translate to world position)
     -- In our multiply order: we build right-to-left, so rotation first then translation
@@ -848,7 +848,8 @@ function menu.draw_sphere(sphere, pitch, yaw, roll, texData, brightness)
                 {pos = {p2[1], p2[2], p2[3]}, uv = {uv2.x / 64, uv2.y / 32}},
                 nil,
                 texData,
-                brightness
+                brightness,
+                alpha
             )
         end
     end
@@ -927,14 +928,15 @@ function menu.draw_ship()
                 local p2 = mat4.multiplyVec4(flameMatrix, {v2.pos[1], v2.pos[2], v2.pos[3], 1})
                 local p3 = mat4.multiplyVec4(flameMatrix, {v3.pos[1], v3.pos[2], v3.pos[3], 1})
 
-                -- 50% dithering for flame transparency effect
+                -- Unlit flame with 50% dithering for transparency effect
                 renderer.drawTriangle3D(
                     {pos = {p1[1], p1[2], p1[3]}, uv = v1.uv},
                     {pos = {p2[1], p2[2], p2[3]}, uv = v2.uv},
                     {pos = {p3[1], p3[2], p3[3]}, uv = v3.uv},
                     nil,
                     flameTexData,
-                    0.5  -- 50% dithering
+                    1.0,  -- Full brightness (unlit)
+                    0.5   -- 50% alpha for dithering
                 )
             end
         end
