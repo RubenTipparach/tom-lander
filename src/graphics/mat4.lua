@@ -106,4 +106,46 @@ function mat4.perspective(fov, aspect, near, far)
     }
 end
 
+function mat4.orthographic(left, right, bottom, top, near, far)
+    local w = right - left
+    local h = top - bottom
+    local d = far - near
+
+    return {
+        2 / w, 0, 0, -(right + left) / w,
+        0, 2 / h, 0, -(top + bottom) / h,
+        0, 0, -2 / d, -(far + near) / d,
+        0, 0, 0, 1
+    }
+end
+
+function mat4.lookAt(eyeX, eyeY, eyeZ, targetX, targetY, targetZ, upX, upY, upZ)
+    -- Calculate forward vector (from eye to target)
+    local fwdX = targetX - eyeX
+    local fwdY = targetY - eyeY
+    local fwdZ = targetZ - eyeZ
+    local fwdLen = math.sqrt(fwdX * fwdX + fwdY * fwdY + fwdZ * fwdZ)
+    fwdX, fwdY, fwdZ = fwdX / fwdLen, fwdY / fwdLen, fwdZ / fwdLen
+
+    -- Calculate right vector (cross product of forward and up)
+    local rightX = fwdY * upZ - fwdZ * upY
+    local rightY = fwdZ * upX - fwdX * upZ
+    local rightZ = fwdX * upY - fwdY * upX
+    local rightLen = math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ)
+    rightX, rightY, rightZ = rightX / rightLen, rightY / rightLen, rightZ / rightLen
+
+    -- Recalculate up vector (cross product of right and forward)
+    local newUpX = rightY * fwdZ - rightZ * fwdY
+    local newUpY = rightZ * fwdX - rightX * fwdZ
+    local newUpZ = rightX * fwdY - rightY * fwdX
+
+    -- Build view matrix (rotation then translation)
+    return {
+        rightX, rightY, rightZ, -(rightX * eyeX + rightY * eyeY + rightZ * eyeZ),
+        newUpX, newUpY, newUpZ, -(newUpX * eyeX + newUpY * eyeY + newUpZ * eyeZ),
+        -fwdX, -fwdY, -fwdZ, (fwdX * eyeX + fwdY * eyeY + fwdZ * eyeZ),
+        0, 0, 0, 1
+    }
+end
+
 return mat4

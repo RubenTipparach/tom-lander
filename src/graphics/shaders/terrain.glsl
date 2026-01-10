@@ -24,25 +24,27 @@ uniform float u_fogNear;
 uniform float u_fogFar;
 uniform vec3 u_fogColor;
 
-// Palette-based shadow uniforms
-uniform float u_usePaletteShadows;
-uniform float u_ditherPaletteShadows;
-uniform float u_shadowBrightnessMin;
-uniform float u_shadowBrightnessMax;
-uniform float u_shadowDitherRange;
-uniform Image u_paletteShadowLookup;   // 32x8 texture: palette shadows lookup (x=color, y=level)
+// Shadow map uniforms
+uniform float u_shadowMapEnabled;
+uniform Image u_shadowMap;
+uniform mat4 u_lightViewMatrix;
+uniform mat4 u_lightProjMatrix;
+uniform float u_shadowDarkness;  // How much to darken shadowed areas (0-1, 0=black)
+uniform float u_shadowDebug;     // 1.0 = show debug colors (red=shadow, green=lit)
 
 #ifdef VERTEX
 varying vec2 v_texCoord;
 varying vec4 v_color;
 varying float v_height;      // Raw height value for texture blending
 varying float v_viewDist;
+varying vec4 v_worldPos;     // World position for shadow map lookup
 
 vec4 position(mat4 transformProjection, vec4 vertexPosition) {
     vec4 worldPosition = modelMatrix * vertexPosition;
     vec4 viewPosition = viewMatrix * worldPosition;
     vec4 screenPosition = projectionMatrix * viewPosition;
 
+    v_worldPos = worldPosition;
     v_viewDist = length(viewPosition.xyz);
     v_texCoord = VaryingTexCoord.xy;
     v_color = VaryingColor;
@@ -62,6 +64,7 @@ varying vec2 v_texCoord;
 varying vec4 v_color;
 varying float v_height;
 varying float v_viewDist;
+varying vec4 v_worldPos;
 
 // Bayer 4x4 dithering matrix
 float getBayerValue(vec2 screenPos) {
@@ -87,35 +90,42 @@ float getBayerValue(vec2 screenPos) {
     return 5.0/16.0;
 }
 
-// Find closest palette index for a given RGB color by searching the lookup texture
-int findPaletteIndex(vec3 rgb) {
-    int bestIndex = 0;
-    float bestDist = 1000000.0;
+// Sample shadow map to determine if pixel is in shadow
+// Returns 1.0 if in shadow, 0.0 if lit
+float getShadowFactor(vec4 worldPos) {
+    if (u_shadowMapEnabled < 0.5) return 0.0;
 
-    // Sample the first row (level 0) of the palette shadow lookup to get all 32 palette colors
-    for (int i = 0; i < 32; i++) {
-        // Sample palette color from lookup texture (row 0 = original colors)
-        vec2 uv = vec2((float(i) + 0.5) / 32.0, 0.5 / 8.0);
-        vec3 paletteColor = Texel(u_paletteShadowLookup, uv).rgb;
+    // Transform world position to light clip space
+    vec4 lightViewPos = u_lightViewMatrix * worldPos;
+    vec4 lightClipPos = u_lightProjMatrix * lightViewPos;
 
-        vec3 diff = rgb - paletteColor;
-        float dist = dot(diff, diff);
-        if (dist < bestDist) {
-            bestDist = dist;
-            bestIndex = i;
-        }
+    // Perspective divide
+    vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
+
+    // Convert from NDC (-1 to 1) to texture coordinates (0 to 1)
+    // No Y flip needed - shadow map shader doesn't flip either
+    vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
+
+    // Check if outside shadow map bounds
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0) {
+        return 0.0;  // Outside shadow map = not in shadow
     }
 
-    return bestIndex;
-}
+    // Sample shadow map depth
+    float shadowMapDepth = Texel(u_shadowMap, shadowUV).r;
 
-// Check if palette texture is loaded by sampling a known non-black color
-bool isPaletteTextureValid() {
-    // Sample palette index 7 (white - should be bright)
-    vec2 uv = vec2((7.0 + 0.5) / 32.0, 0.5 / 8.0);
-    vec3 white = Texel(u_paletteShadowLookup, uv).rgb;
-    // White should have high brightness (>0.8)
-    return (white.r + white.g + white.b) > 2.0;
+    // Calculate current fragment's depth (same formula as shadow shader)
+    float currentDepth = lightNDC.z * 0.5 + 0.5;
+
+    // Shadow bias to prevent shadow acne
+    float bias = 0.005;
+
+    // If current depth > shadow map depth + bias, we're in shadow
+    if (currentDepth > shadowMapDepth + bias) {
+        return 1.0;  // In shadow
+    }
+
+    return 0.0;  // Lit
 }
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
@@ -160,100 +170,71 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
     }
 
     // Check for fog FIRST - if fogged, skip all lighting/shadow calculations
-    bool isFogged = false;
     if (u_fogEnabled > 0.5 && v_viewDist > u_fogNear) {
         float fogFactor = clamp((v_viewDist - u_fogNear) / (u_fogFar - u_fogNear), 0.0, 1.0);
         float threshold = getBayerValue(screen_coords);
         if (fogFactor > threshold) {
-            isFogged = true;
             // Apply fog color immediately
-            if (u_usePaletteShadows > 0.5 && isPaletteTextureValid()) {
-                int fogPaletteIndex = findPaletteIndex(u_fogColor);
-                vec2 fogUV = vec2((float(fogPaletteIndex) + 0.5) / 32.0, 0.5 / 8.0);
-                texColor.rgb = Texel(u_paletteShadowLookup, fogUV).rgb;
-            } else {
-                texColor.rgb = u_fogColor;
-            }
+            texColor.rgb = u_fogColor;
             texColor.a = 1.0;
             return texColor;  // Skip all lighting/shadow processing
         }
     }
 
+    // Apply shadow map first (before lighting block so shadowFactor is accessible)
+    float shadowFactor = getShadowFactor(v_worldPos);
+
     // Apply lighting - ALWAYS use palette path to prevent uniform optimization
     {
         float brightness = v_color.r;  // Brightness stored in RGB channels
 
-        // Check for unlit objects (brightness >= 0.999 means no lighting/shadows applied)
-        bool isUnlit = (brightness >= 0.999);
+        // Note: isUnlit check removed - terrain should always receive shadows
+        // (brightness 1.0 is normal for upward-facing terrain)
 
-        if (!isUnlit) {
+        // DEBUG: Visualize shadow map - press F4 to toggle
+        if (u_shadowDebug > 0.5 && u_shadowMapEnabled > 0.5) {
+            // Show shadow map depth as grayscale (white = far, black = near)
+            vec4 lightViewPos = u_lightViewMatrix * v_worldPos;
+            vec4 lightClipPos = u_lightProjMatrix * lightViewPos;
+            vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
+            vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
 
-        // Palette-based shadow mapping with 8 levels
-
-        // Find closest palette color for the texture color
-        int paletteIndex = findPaletteIndex(texColor.rgb);
-
-        // Map brightness to shadow level (0-7)
-        // Level 0 = brightest (original color), Level 7 = darkest shadow
-        float normalizedBrightness = clamp(
-            (brightness - u_shadowBrightnessMin) / (u_shadowBrightnessMax - u_shadowBrightnessMin),
-            0.0, 1.0
-        );
-
-        // INVERT: High brightness = low level (bright), Low brightness = high level (dark)
-        float levelFloat = (1.0 - normalizedBrightness) * 7.0;
-        float levelFloored = floor(levelFloat);
-        int level0 = int(levelFloored);
-        int level1 = level0 + 1;
-        if (level1 > 7) level1 = 7;
-        float blend = levelFloat - levelFloored;
-
-        // Get colors for the two adjacent levels from the lookup texture
-        // UV coordinates: x = (paletteIndex + 0.5) / 32, y = (level + 0.5) / 8
-        vec2 uv0 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level0) + 0.5) / 8.0);
-        vec2 uv1 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level1) + 0.5) / 8.0);
-
-        vec3 color0 = Texel(u_paletteShadowLookup, uv0).rgb;
-        vec3 color1 = Texel(u_paletteShadowLookup, uv1).rgb;
-
-        // Debug: Check if palette lookup is working
-        // If we get pure black from lookup but we're not sampling black palette
-        if (length(color0) < 0.01 && paletteIndex != 0) {
-            // Texture not working - use RGB fallback
-            texColor.rgb *= v_color.rgb;
-            return texColor;
-        }
-
-        // Choose between dithered and hard transition
-        if (u_ditherPaletteShadows > 0.5 && u_shadowDitherRange > 0.0) {
-            // Dithered transition between levels
-            float ditherRangeMin = 0.5 - u_shadowDitherRange * 0.5;
-            float ditherRangeMax = 0.5 + u_shadowDitherRange * 0.5;
-
-            if (blend < ditherRangeMin) {
-                // Below dither range - use color0
-                texColor.rgb = color0;
-            } else if (blend > ditherRangeMax) {
-                // Above dither range - use color1
-                texColor.rgb = color1;
-            } else {
-                // Within dither range - apply dithering
-                float normalizedBlend = (blend - ditherRangeMin) / (ditherRangeMax - ditherRangeMin);
-                float ditherThreshold = getBayerValue(screen_coords);
-                texColor.rgb = (normalizedBlend > ditherThreshold) ? color1 : color0;
+            // Out of bounds = blue
+            if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0) {
+                return vec4(0.0, 0.0, 1.0, 1.0);  // Blue = outside shadow map
             }
-        } else {
-            // Hard level cutoff (no dithering)
-            texColor.rgb = color0;
+
+            float shadowMapDepth = Texel(u_shadowMap, shadowUV).r;
+            float currentDepth = lightNDC.z * 0.5 + 0.5;
+
+            // Red = in shadow, Green = lit, brightness = depth
+            if (currentDepth > shadowMapDepth + 0.005) {
+                return vec4(shadowMapDepth, 0.0, 0.0, 1.0);  // Red = shadow (brightness shows depth)
+            } else {
+                return vec4(0.0, shadowMapDepth, 0.0, 1.0);  // Green = lit (brightness shows depth)
+            }
         }
 
-        // Apply result based on mode
-        if (u_usePaletteShadows < 0.5) {
-            // Palette shadows disabled - use traditional RGB darkening instead
-            texColor.rgb *= v_color.rgb;
-        }
+        // Apply directional lighting via RGB darkening
+        texColor.rgb *= brightness;
 
-        } // End of !isUnlit block
+        // Apply shadow darkening directly (same calculation as debug mode)
+        if (u_shadowMapEnabled > 0.5) {
+            vec4 lightViewPos = u_lightViewMatrix * v_worldPos;
+            vec4 lightClipPos = u_lightProjMatrix * lightViewPos;
+            vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
+            vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
+
+            if (shadowUV.x >= 0.0 && shadowUV.x <= 1.0 && shadowUV.y >= 0.0 && shadowUV.y <= 1.0) {
+                float shadowMapDepth = Texel(u_shadowMap, shadowUV).r;
+                float currentDepth = lightNDC.z * 0.5 + 0.5;
+
+                if (currentDepth > shadowMapDepth + 0.005) {
+                    // In shadow - darken significantly
+                    texColor.rgb *= 0.4;
+                }
+            }
+        }
 
         // NOTE: Terrain doesn't use alpha for transparency
         // v_color.a contains height data, not transparency

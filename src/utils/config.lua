@@ -180,4 +180,12 @@ config.WIND_ARROW_COLOR_R = 60               -- Base red color (blue arrow)
 config.WIND_ARROW_COLOR_G = 140              -- Base green color
 config.WIND_ARROW_COLOR_B = 255              -- Base blue color
 
+-- ===========================================
+-- SHADOW SETTINGS (Projected ground shadows)
+-- ===========================================
+config.SHADOWS_ENABLED = true                -- Master toggle for shadows
+config.SHADOW_DARKNESS = 0.5                 -- Shadow darkness (0 = black, 1 = no change). Uses multiply blend.
+config.SHADOW_OFFSET_Y = 0.03                -- Height offset above terrain (prevent z-fighting)
+config.SHADOW_RENDER_DISTANCE = 30           -- Max distance to render shadows
+
 return config

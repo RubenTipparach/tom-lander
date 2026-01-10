@@ -21,6 +21,7 @@ local shader3D = nil
 local shaderFlat = nil
 local shaderSky = nil  -- Dedicated sky shader (no fog)
 local shaderTerrain = nil  -- Terrain shader with height-based texture blending
+local shaderShadow = nil  -- Shadow shader with dithered transparency
 
 -- Terrain textures for shader
 local terrainTextures = {
@@ -31,6 +32,16 @@ local terrainTextures = {
 
 -- Terrain batch (separate from regular batches)
 local terrainBatch = {vertices = {}, count = 0}
+
+-- Shadow batch (projected ground shadows) - DEPRECATED, kept for compatibility
+local shadowBatch = {vertices = {}, count = 0}
+
+-- Shadow map state (new shadow system)
+local shadowMapTexture = nil
+local shadowMapLightViewMatrix = nil
+local shadowMapLightProjMatrix = nil
+local shadowMapEnabled = false
+local shadowDebugEnabled = false  -- F4 toggle for debug visualization
 
 -- Current state (separate matrices like g3d)
 local currentProjectionMatrix = nil
@@ -210,6 +221,23 @@ function renderer_gpu.init(width, height)
         shaderTerrain = shader3D
     end
 
+    -- Load shadow shader (dithered ground shadows)
+    local shaderShadowCode = love.filesystem.read(shaderPath .. "shadow.glsl")
+    if shaderShadowCode then
+        local ok, shaderOrErr = pcall(love.graphics.newShader, shaderShadowCode)
+        if ok then
+            shaderShadow = shaderOrErr
+            print("Shadow shader compiled successfully")
+        else
+            print("Shadow shader compilation error: " .. tostring(shaderOrErr))
+            -- Shadows will be disabled if shader fails
+            shaderShadow = nil
+        end
+    else
+        print("Could not load shadow.glsl shader, shadows disabled")
+        shaderShadow = nil
+    end
+
     -- Create persistent mesh for batched drawing
     batchMesh = love.graphics.newMesh(vertexFormat3D, MAX_VERTICES, "triangles", "stream")
 
@@ -232,6 +260,7 @@ function renderer_gpu.clearBuffers()
         batch.count = 0
     end
     terrainBatch.count = 0  -- Clear terrain batch
+    shadowBatch.count = 0   -- Clear shadow batch
     flushed3D = false  -- Reset flush flag for new frame
 
     -- Set render target with depth buffer
@@ -869,15 +898,10 @@ function renderer_gpu.flushTerrain()
     shaderTerrain:send("u_fogFar", fogFar)
     shaderTerrain:send("u_fogColor", fogColor)
 
-    -- Send palette-based shadow uniforms (if enabled)
-    if config.USE_PALETTE_SHADOWS then
-        renderer_gpu.sendPaletteUniforms(shaderTerrain)
-        shaderTerrain:send("u_ditherPaletteShadows", config.DITHER_PALETTE_SHADOWS and 1.0 or 0.0)
-        shaderTerrain:send("u_shadowBrightnessMin", config.SHADOW_BRIGHTNESS_MIN or 0.3)
-        shaderTerrain:send("u_shadowBrightnessMax", config.SHADOW_BRIGHTNESS_MAX or 0.95)
-        shaderTerrain:send("u_shadowDitherRange", config.SHADOW_DITHER_RANGE or 0.5)
-    end
-    shaderTerrain:send("u_usePaletteShadows", config.USE_PALETTE_SHADOWS and 1.0 or 0.0)
+    -- Palette shadow uniforms removed - using simple RGB darkening for now
+
+    -- Send shadow map uniforms
+    renderer_gpu.sendShadowMapUniforms(shaderTerrain)
 
     -- Enable backface culling for terrain (use "front" because shader Y-flip reverses winding order)
     love.graphics.setMeshCullMode("front")
@@ -898,6 +922,151 @@ function renderer_gpu.flushTerrain()
 
     -- Clear terrain batch for next frame
     terrainBatch.count = 0
+end
+
+-- Add a shadow triangle to the shadow batch
+-- v1, v2, v3 are {x, y, z} world positions
+function renderer_gpu.drawShadowTriangle(v1, v2, v3)
+    if not shaderShadow then return end  -- Shadows disabled if shader failed to load
+
+    local verts = shadowBatch.vertices
+    local idx = shadowBatch.count * 3
+
+    -- Shadow vertices: position only, no UV needed (solid color shader)
+    -- Format: {x, y, z, w, u, v, r, g, b, a}
+    verts[idx + 1] = {v1[1], v1[2], v1[3], 1.0, 0, 0, 1, 1, 1, 1}
+    verts[idx + 2] = {v2[1], v2[2], v2[3], 1.0, 0, 0, 1, 1, 1, 1}
+    verts[idx + 3] = {v3[1], v3[2], v3[3], 1.0, 0, 0, 1, 1, 1, 1}
+    shadowBatch.count = shadowBatch.count + 1
+end
+
+-- Flush all shadow triangles to the canvas
+-- Call AFTER flushTerrain but BEFORE drawing objects
+-- Uses stencil buffer to prevent shadow stacking (overlapping shadows merge instead of darken)
+function renderer_gpu.flushShadows()
+    if shadowBatch.count == 0 then
+        return
+    end
+    if not shaderShadow then
+        return
+    end
+
+    -- Set up shadow shader
+    love.graphics.setShader(shaderShadow)
+
+    -- Send matrices to shader
+    if currentProjectionMatrix and currentViewMatrix then
+        shaderShadow:send("projectionMatrix", currentProjectionMatrix)
+        shaderShadow:send("viewMatrix", currentViewMatrix)
+        shaderShadow:send("modelMatrix", {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1})  -- Identity
+    end
+
+    -- Send shadow uniforms
+    -- SHADOW_DARKNESS: 0.0 = completely black, 1.0 = no change
+    -- A value like 0.5 means the surface will be darkened to 50% brightness
+    local shadowDarkness = config.SHADOW_DARKNESS or 0.5
+    shaderShadow:send("u_shadowDarkness", shadowDarkness)
+
+    -- Send fog uniforms (shadows fade with fog)
+    shaderShadow:send("u_fogEnabled", fogEnabled and 1.0 or 0.0)
+    shaderShadow:send("u_fogNear", fogNear)
+    shaderShadow:send("u_fogFar", fogFar)
+
+    -- Depth test ON but depth write OFF (shadows appear on terrain, don't occlude objects)
+    love.graphics.setDepthMode("lequal", false)
+
+    -- Disable backface culling for shadows (projected geometry can have flipped winding)
+    love.graphics.setMeshCullMode("none")
+
+    -- Use multiplicative blending to darken the surface underneath
+    -- This preserves the surface color while making it darker
+    love.graphics.setBlendMode("multiply", "premultiplied")
+
+    -- Prepare the mesh for drawing
+    local vertCount = shadowBatch.count * 3
+    batchMesh:setVertices(shadowBatch.vertices, 1, vertCount)
+    batchMesh:setTexture(nil)  -- No texture needed
+    batchMesh:setDrawRange(1, vertCount)
+
+    -- Draw shadows (simple approach without stencil for now)
+    -- Note: overlapping shadows will stack/darken more
+    love.graphics.draw(batchMesh)
+
+    stats.drawCalls = stats.drawCalls + 1
+
+    -- Restore normal blend mode, depth write for subsequent geometry
+    love.graphics.setBlendMode("alpha")
+    love.graphics.setDepthMode("lequal", true)
+    love.graphics.setShader()
+
+    -- Clear shadow batch
+    shadowBatch.count = 0
+end
+
+-- Set shadow map data from ShadowMap module
+function renderer_gpu.setShadowMap(texture, lightViewMatrix, lightProjMatrix)
+    shadowMapTexture = texture
+    shadowMapLightViewMatrix = lightViewMatrix
+    shadowMapLightProjMatrix = lightProjMatrix
+    shadowMapEnabled = (texture ~= nil)
+end
+
+-- Clear shadow map (disable shadows)
+function renderer_gpu.clearShadowMap()
+    shadowMapTexture = nil
+    shadowMapLightViewMatrix = nil
+    shadowMapLightProjMatrix = nil
+    shadowMapEnabled = false
+end
+
+-- Toggle shadow debug visualization (F4)
+function renderer_gpu.toggleShadowDebug()
+    shadowDebugEnabled = not shadowDebugEnabled
+    return shadowDebugEnabled
+end
+
+-- Get shadow debug state
+function renderer_gpu.isShadowDebugEnabled()
+    return shadowDebugEnabled
+end
+
+-- Debug flag for shadow map
+local shadowMapDebugPrinted = false
+
+-- Send shadow map uniforms to a shader
+function renderer_gpu.sendShadowMapUniforms(shader)
+    if not shader then return end
+
+    pcall(function()
+        shader:send("u_shadowMapEnabled", shadowMapEnabled and 1.0 or 0.0)
+    end)
+
+    -- Always send debug flag
+    pcall(function()
+        shader:send("u_shadowDebug", shadowDebugEnabled and 1.0 or 0.0)
+    end)
+
+    if shadowMapEnabled and shadowMapTexture then
+        if not shadowMapDebugPrinted then
+            print("Renderer: Sending shadow map uniforms")
+            print("  Shadow map size: " .. shadowMapTexture:getWidth() .. "x" .. shadowMapTexture:getHeight())
+            print("  Shadow darkness: " .. (config.SHADOW_DARKNESS or 0.5))
+            shadowMapDebugPrinted = true
+        end
+
+        pcall(function()
+            shader:send("u_shadowMap", shadowMapTexture)
+        end)
+        pcall(function()
+            shader:send("u_lightViewMatrix", shadowMapLightViewMatrix)
+        end)
+        pcall(function()
+            shader:send("u_lightProjMatrix", shadowMapLightProjMatrix)
+        end)
+        pcall(function()
+            shader:send("u_shadowDarkness", config.SHADOW_DARKNESS or 0.5)
+        end)
+    end
 end
 
 -- Project a 3D world position to 2D screen coordinates

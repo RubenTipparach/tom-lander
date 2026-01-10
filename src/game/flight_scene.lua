@@ -26,6 +26,8 @@ local Weather = require("weather")
 local Aliens = require("aliens")
 local Bullets = require("bullets")
 local Turret = require("turret")
+local Shadow = require("graphics.shadow")
+local ShadowMap = require("graphics.shadow_map")
 
 local flight_scene = {}
 
@@ -79,6 +81,13 @@ function flight_scene.load()
         local intensity = config.LIGHT_INTENSITY or 0.8
         local ambient = config.AMBIENT_LIGHT or 0.3
         renderer.setDirectionalLight(lightDir[1], lightDir[2], lightDir[3], intensity, ambient)
+    end
+
+    -- Initialize shadow map system
+    if config.SHADOWS_ENABLED then
+        ShadowMap.init()
+        local lightDir = config.LIGHT_DIRECTION or {-0.866, 0.5, 0.0}
+        ShadowMap.setLightDirection(lightDir[1], lightDir[2], lightDir[3])
     end
 
     -- Create projection matrix
@@ -570,6 +579,52 @@ function flight_scene.draw()
     local viewMatrix = camera_module.getViewMatrix(cam, cam_dist)
     renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
     profile("clear")
+
+    -- Render shadow map BEFORE terrain (terrain shader samples this)
+    if config.SHADOWS_ENABLED then
+        profile(" shadows")
+
+        -- Begin shadow map pass
+        if ShadowMap.beginPass(cam.pos.x, cam.pos.y, cam.pos.z) then
+            -- Add ship as shadow caster
+            if ship and ship.mesh then
+                ShadowMap.addMeshCaster(ship.mesh, ship:get_model_matrix())
+            end
+
+            -- Add trees as shadow casters
+            local trees = Trees.get_all()
+            for _, tree in ipairs(trees) do
+                ShadowMap.addTreeCaster(tree.x, tree.y, tree.z, 1.2, tree.height or 4)
+            end
+
+            -- Add buildings as shadow casters
+            for _, building in ipairs(buildings) do
+                local groundY = Heightmap.get_height(building.x, building.z)
+                ShadowMap.addBoxCaster(building.x, groundY, building.z,
+                    building.width, building.height, building.depth)
+            end
+
+            -- Add landing pads as shadow casters
+            local pads = LandingPads.get_all()
+            for _, pad in ipairs(pads) do
+                local groundY = Heightmap.get_height(pad.x, pad.z)
+                ShadowMap.addBoxCaster(pad.x, groundY, pad.z,
+                    pad.width, pad.height or 0.5, pad.depth)
+            end
+
+            -- Render shadow map
+            ShadowMap.endPass()
+
+            -- Pass shadow map to renderer for terrain shader
+            renderer.setShadowMap(
+                ShadowMap.getTexture(),
+                ShadowMap.getLightViewMatrix(),
+                ShadowMap.getLightProjMatrix()
+            )
+        end
+
+        profile(" shadows")
+    end
 
     -- Draw skydome FIRST (always behind everything, follows camera)
     -- Use overcast sky texture during weather
