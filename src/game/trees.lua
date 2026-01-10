@@ -113,10 +113,6 @@ function Trees.draw(renderer, cam_x, cam_y, cam_z, cam_yaw)
         local dist_sq = dx * dx + dz * dz
 
         if dist_sq < render_dist_sq then
-            -- Calculate fog factor for entire tree (per-mesh fog)
-            local distance = math.sqrt(dist_sq)
-            local fogFactor = renderer.calcFogFactor(distance)
-
             -- Cache tree position for inner loop
             local tree_x, tree_y, tree_z = tree.x, tree.y, tree.z
 
@@ -138,14 +134,15 @@ function Trees.draw(renderer, cam_x, cam_y, cam_z, cam_yaw)
                     brightness = renderer.calculateVertexBrightness(nx, ny, nz)
                 end
 
+                -- Note: Don't pass fogFactor - GPU renderer handles fog via shader based on view distance
+                -- The 7th parameter is 'alpha' in the GPU renderer, not fogFactor
                 renderer.drawTriangle3D(
                     {pos = p1, uv = v1.uv},
                     {pos = p2, uv = v2.uv},
                     {pos = p3, uv = v3.uv},
                     nil,
                     cached_tex_data,
-                    brightness,
-                    fogFactor
+                    brightness
                 )
             end
         end
