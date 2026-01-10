@@ -28,6 +28,7 @@ local Bullets = require("bullets")
 local Turret = require("turret")
 local Shadow = require("graphics.shadow")
 local ShadowMap = require("graphics.shadow_map")
+local Fireworks = require("fireworks")
 
 local flight_scene = {}
 
@@ -289,6 +290,20 @@ function flight_scene.update(dt)
         return
     end
 
+    -- Check for lap completion - trigger small fireworks
+    if Mission.lap_just_completed then
+        Mission.lap_just_completed = false
+        -- Launch fireworks around the ship
+        Fireworks.burst(ship.x, ship.y, ship.z, 3, 0.8)
+    end
+
+    -- Check for race completion - trigger big celebration fireworks
+    if Mission.race_just_completed then
+        Mission.race_just_completed = false
+        -- Big fireworks celebration!
+        Fireworks.celebrate(ship.x, ship.y, ship.z)
+    end
+
     -- Check if race just completed - enter victory mode
     if Mission.race_complete and not race_victory_mode then
         race_victory_mode = true
@@ -310,6 +325,21 @@ function flight_scene.update(dt)
         -- Keep thrusters active for flame animation (gentle hover effect)
         for _, thruster in ipairs(ship.thrusters) do
             thruster.active = true
+        end
+
+        -- Update fireworks during victory celebration
+        Fireworks.update(dt)
+
+        -- Launch more fireworks periodically during victory
+        if math.random() < dt * 2 then  -- Roughly 2 per second
+            local angle = math.random() * math.pi * 2
+            local dist = 8 + math.random() * 8
+            Fireworks.launch(
+                ship.x + math.sin(angle) * dist,
+                ship.y - 2,
+                ship.z + math.cos(angle) * dist,
+                1.2
+            )
         end
 
         -- Orbit camera around ship
@@ -482,6 +512,9 @@ function flight_scene.update(dt)
     -- Update weather system (rain particles, wind changes, lightning)
     Weather.update(dt, cam.pos.x, cam.pos.y, cam.pos.z, ship.vx, ship.vy, ship.vz)
     Weather.apply_wind(ship, ship.y, is_grounded)
+
+    -- Update fireworks (for lap completion celebrations)
+    Fireworks.update(dt)
 
     -- Update combat systems (Mission 6)
     if combat_active then
@@ -768,6 +801,9 @@ function flight_scene.draw()
         profile(" speedlines")
     end
 
+    -- Draw fireworks (celebratory effects for race lap/completion)
+    Fireworks.draw(renderer)
+
     -- Draw minimap (pass mission cargo if active, otherwise free-flight cargo)
     profile(" minimap")
     local minimap_cargo = Mission.is_active() and Mission.cargo_objects or cargo_items
@@ -831,6 +867,7 @@ function flight_scene.keypressed(key)
     if Mission.is_complete() and key == "q" then
         Mission.reset()
         race_victory_mode = false  -- Reset victory mode
+        Fireworks.reset()  -- Clear fireworks
         if combat_active then
             Aliens.reset()
             Bullets.reset()
@@ -848,6 +885,7 @@ function flight_scene.keypressed(key)
             HUD.close_pause()
             Mission.reset()
             race_victory_mode = false  -- Reset victory mode
+            Fireworks.reset()  -- Clear fireworks
             if combat_active then
                 Aliens.reset()
                 Bullets.reset()
@@ -876,8 +914,9 @@ function flight_scene.keypressed(key)
         cam.pitch = 0
         cam.yaw = 0
 
-        -- Reset victory mode
+        -- Reset victory mode and fireworks
         race_victory_mode = false
+        Fireworks.reset()
 
         -- Reset mission or race if active
         if Mission.is_active() then

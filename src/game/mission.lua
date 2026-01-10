@@ -64,6 +64,8 @@ Mission.current_mission_num = nil
 Mission.race = nil
 Mission.race_checkpoints = nil
 Mission.race_complete = false  -- True when race is finished (for victory screen)
+Mission.lap_just_completed = false  -- True for one frame when a lap finishes (for fireworks)
+Mission.race_just_completed = false  -- True for one frame when race finishes (for big fireworks)
 
 -- Initialize a hover mission (take off, hover, land)
 function Mission.start_hover_mission(hover_duration, landing_pad_x, landing_pad_z, landing_pad_id)
@@ -302,8 +304,12 @@ function Mission.update_race(dt, ship_x, ship_z)
 
             if race.current_lap > race.total_laps then
                 -- Race complete!
+                Mission.race_just_completed = true  -- Trigger big fireworks
                 Mission.complete_race()
                 return
+            else
+                -- Lap complete but race continues
+                Mission.lap_just_completed = true  -- Trigger lap fireworks
             end
         end
 
@@ -401,6 +407,8 @@ function Mission.reset()
     Mission.race = nil
     Mission.race_checkpoints = nil
     Mission.race_complete = false
+    Mission.lap_just_completed = false
+    Mission.race_just_completed = false
 end
 
 -- Get mission data for HUD
