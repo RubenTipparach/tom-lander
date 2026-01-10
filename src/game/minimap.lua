@@ -96,7 +96,7 @@ function Minimap.world_to_minimap(world_x, world_z, heightmap)
 end
 
 -- Draw the minimap using the software renderer
-function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, mission_target)
+function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, mission_target, race_checkpoints, current_checkpoint)
     -- Generate cache on first draw
     if not terrain_cache and heightmap then
         Minimap.generate_terrain_cache(heightmap)
@@ -176,8 +176,8 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         end
     end
 
-    -- Draw mission target (blinking green diamond)
-    if mission_target then
+    -- Draw mission target (blinking green diamond) - skip for race mode (we draw checkpoints instead)
+    if mission_target and not race_checkpoints then
         local blink = (love.timer.getTime() * 3) % 1 < 0.7  -- Faster blink, mostly on
         if blink then
             local tx = Minimap.X + Minimap.SIZE / 2 + mission_target.x * pixels_per_world_unit
@@ -189,6 +189,39 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
             renderer.drawPixel(math.floor(tx + 1), math.floor(ty), 0, 255, 0)  -- Right
             renderer.drawPixel(math.floor(tx), math.floor(ty + 1), 0, 255, 0)  -- Bottom
             renderer.drawPixel(math.floor(tx), math.floor(ty), 0, 255, 0)      -- Center
+        end
+    end
+
+    -- Draw race checkpoints
+    if race_checkpoints then
+        for i, cp in ipairs(race_checkpoints) do
+            local cx = Minimap.X + Minimap.SIZE / 2 + cp.x * pixels_per_world_unit
+            local cy = Minimap.Y + Minimap.SIZE / 2 + cp.z * pixels_per_world_unit
+
+            -- Color based on checkpoint state
+            local r, g, b
+            if i == current_checkpoint then
+                -- Current checkpoint: blinking yellow
+                local blink = (love.timer.getTime() * 4) % 1 < 0.7
+                if blink then
+                    r, g, b = 255, 200, 0
+                else
+                    r, g, b = 180, 140, 0
+                end
+            elseif i < current_checkpoint then
+                -- Passed checkpoint: dim green
+                r, g, b = 60, 120, 60
+            else
+                -- Future checkpoint: dim cyan
+                r, g, b = 60, 100, 140
+            end
+
+            -- Draw checkpoint marker (small cross)
+            renderer.drawPixel(math.floor(cx), math.floor(cy), r, g, b)
+            renderer.drawPixel(math.floor(cx - 1), math.floor(cy), r, g, b)
+            renderer.drawPixel(math.floor(cx + 1), math.floor(cy), r, g, b)
+            renderer.drawPixel(math.floor(cx), math.floor(cy - 1), r, g, b)
+            renderer.drawPixel(math.floor(cx), math.floor(cy + 1), r, g, b)
         end
     end
 

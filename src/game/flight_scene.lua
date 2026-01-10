@@ -26,6 +26,8 @@ local Weather = require("weather")
 local Aliens = require("aliens")
 local Bullets = require("bullets")
 local Turret = require("turret")
+local Shadow = require("graphics.shadow")
+local ShadowMap = require("graphics.shadow_map")
 
 local flight_scene = {}
 
@@ -56,10 +58,16 @@ local cargo_items = {}
 -- Game mode and mission
 local game_mode = "arcade"  -- "arcade" or "simulation"
 local current_mission_num = nil  -- nil = free flight
+local current_track_num = nil  -- Track number for racing mode
 
 -- Combat state (Mission 6)
 local combat_active = false
 local wave_start_delay = 0  -- Delay before starting next wave
+
+-- Race victory state
+local race_victory_mode = false
+local race_victory_cam_angle = 0  -- Camera orbit angle around ship
+local race_victory_ship_pos = {x = 0, y = 0, z = 0}  -- Frozen ship position
 
 -- Fonts
 local thrusterFont = nil
@@ -79,6 +87,13 @@ function flight_scene.load()
         local intensity = config.LIGHT_INTENSITY or 0.8
         local ambient = config.AMBIENT_LIGHT or 0.3
         renderer.setDirectionalLight(lightDir[1], lightDir[2], lightDir[3], intensity, ambient)
+    end
+
+    -- Initialize shadow map system
+    if config.SHADOWS_ENABLED then
+        ShadowMap.init()
+        local lightDir = config.LIGHT_DIRECTION or {-0.866, 0.5, 0.0}
+        ShadowMap.setLightDirection(lightDir[1], lightDir[2], lightDir[3])
     end
 
     -- Create projection matrix
@@ -177,10 +192,11 @@ function flight_scene.load()
     local menu = require("menu")
     game_mode = menu.game_mode or "arcade"
     current_mission_num = menu.selected_mission  -- nil for free flight
+    current_track_num = menu.selected_track      -- nil if not racing
 
     -- Create cargo items (only for free flight mode)
     cargo_items = {}
-    if not current_mission_num then
+    if not current_mission_num and not current_track_num then
         -- Free flight mode - spawn a test cargo
         table.insert(cargo_items, Cargo.create({
             id = 1,
@@ -191,9 +207,11 @@ function flight_scene.load()
         }))
     end
 
-    -- Start mission if selected
+    -- Start mission or race if selected
     if current_mission_num then
         Missions.start(current_mission_num, Mission)
+    elseif current_track_num then
+        Missions.start_race_track(current_track_num, Mission)
     end
 
     -- Initialize combat systems for Mission 6
@@ -271,6 +289,48 @@ function flight_scene.update(dt)
         return
     end
 
+    -- Check if race just completed - enter victory mode
+    if Mission.race_complete and not race_victory_mode then
+        race_victory_mode = true
+        race_victory_cam_angle = cam.yaw  -- Start from current camera angle
+        race_victory_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
+        -- Zero out ship velocity to freeze it
+        ship.vx = 0
+        ship.vy = 0
+        ship.vz = 0
+    end
+
+    -- Race victory mode: freeze ship but orbit camera
+    if race_victory_mode then
+        -- Keep ship frozen at victory position
+        ship.x = race_victory_ship_pos.x
+        ship.y = race_victory_ship_pos.y
+        ship.z = race_victory_ship_pos.z
+
+        -- Keep thrusters active for flame animation (gentle hover effect)
+        for _, thruster in ipairs(ship.thrusters) do
+            thruster.active = true
+        end
+
+        -- Orbit camera around ship
+        race_victory_cam_angle = race_victory_cam_angle + dt * 0.3  -- Slow rotation
+        local orbit_dist = 12  -- Distance from ship
+        local orbit_height = 3  -- Height above ship
+
+        -- Calculate camera position on orbit
+        cam.pos.x = ship.x + math.sin(race_victory_cam_angle) * orbit_dist
+        cam.pos.y = ship.y + orbit_height
+        cam.pos.z = ship.z + math.cos(race_victory_cam_angle) * orbit_dist
+
+        -- Point camera at ship
+        cam.yaw = race_victory_cam_angle + math.pi  -- Face toward ship center
+        cam.pitch = 0.2  -- Slight downward angle
+
+        camera_module.updateVectors(cam)
+        profile("update")
+        return
+    end
+
     -- Update ship physics
     ship:update(dt)
 
@@ -326,7 +386,15 @@ function flight_scene.update(dt)
         if Collision.box_overlap(ship.x, ship.z, ship_half_width, ship_half_depth,
                                   building.x, building.z, half_width, half_depth) then
             -- Ship is horizontally inside building bounds
-            if ship_bottom < building_top and ship_top > building_bottom then
+            -- Check if ship center is above building top (landing from above)
+            -- Use small tolerance to prevent edge-case side collisions when landing
+            local roof_tolerance = 0.1
+            if ship.y > building_top - roof_tolerance then
+                -- Ship is above building - rooftop is a landing surface
+                if building_top > ground_height then
+                    ground_height = building_top
+                end
+            elseif ship_bottom < building_top and ship_top > building_bottom then
                 -- Side collision: ship is inside building volume - push out
                 ship.x, ship.z = Collision.push_out_of_box(
                     ship.x, ship.z,
@@ -343,11 +411,6 @@ function flight_scene.update(dt)
                 -- Kill velocity when hitting side
                 ship.vx = ship.vx * 0.5
                 ship.vz = ship.vz * 0.5
-            elseif ship_bottom >= building_top then
-                -- Above building - rooftop is a landing surface
-                if building_top > ground_height then
-                    ground_height = building_top
-                end
             end
         end
     end
@@ -571,6 +634,57 @@ function flight_scene.draw()
     renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
     profile("clear")
 
+    -- Render shadow map BEFORE terrain (terrain shader samples this)
+    if config.SHADOWS_ENABLED then
+        profile(" shadows")
+
+        -- Begin shadow map pass
+        if ShadowMap.beginPass(cam.pos.x, cam.pos.y, cam.pos.z) then
+            -- Add ship as shadow caster
+            if ship and ship.mesh then
+                ShadowMap.addMeshCaster(ship.mesh, ship:get_model_matrix())
+            end
+
+            -- Add trees as shadow casters
+            -- Tree mesh is ~2.0 units tall with foliage radius ~0.55 units
+            local trees = Trees.get_all()
+            for _, tree in ipairs(trees) do
+                ShadowMap.addTreeCaster(tree.x, tree.y, tree.z, 0.55, 2.0)
+            end
+
+            -- Add buildings as shadow casters
+            for _, building in ipairs(buildings) do
+                local groundY = Heightmap.get_height(building.x, building.z)
+                ShadowMap.addBoxCaster(building.x, groundY, building.z,
+                    building.width, building.height, building.depth)
+            end
+
+            -- Add landing pads as shadow casters
+            local pads = LandingPads.get_all()
+            for _, pad in ipairs(pads) do
+                local groundY = Heightmap.get_height(pad.x, pad.z)
+                ShadowMap.addBoxCaster(pad.x, groundY, pad.z,
+                    pad.width, pad.height or 0.5, pad.depth)
+            end
+
+            -- Render shadow map
+            ShadowMap.endPass()
+
+            -- Pass cascaded shadow maps to renderer for terrain shader
+            renderer.setShadowMapCascaded(
+                ShadowMap.getTextureNear(),
+                ShadowMap.getLightViewMatrixNear(),
+                ShadowMap.getLightProjMatrixNear(),
+                ShadowMap.getTextureFar(),
+                ShadowMap.getLightViewMatrixFar(),
+                ShadowMap.getLightProjMatrixFar(),
+                ShadowMap.getCascadeSplitDistance()
+            )
+        end
+
+        profile(" shadows")
+    end
+
     -- Draw skydome FIRST (always behind everything, follows camera)
     -- Use overcast sky texture during weather
     profile(" skydome")
@@ -640,6 +754,8 @@ function flight_scene.draw()
     -- Draw 3D guide arrow for missions (anchored to camera pivot, depth tested against geometry)
     if Mission.is_active() then
         Mission.draw_guide_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+        -- Draw 3D checkpoint markers for race mode
+        Mission.draw_checkpoints(renderer, Heightmap, cam.pos.x, cam.pos.z)
     end
 
     -- Draw wind direction arrow (blue, length based on wind strength)
@@ -656,7 +772,10 @@ function flight_scene.draw()
     profile(" minimap")
     local minimap_cargo = Mission.is_active() and Mission.cargo_objects or cargo_items
     local minimap_target = Mission.is_active() and Mission.get_target() or nil
-    Minimap.draw(renderer, Heightmap, ship, LandingPads, minimap_cargo, minimap_target)
+    -- Pass race checkpoints if in race mode
+    local race_checkpoints = Mission.race_checkpoints
+    local current_checkpoint = Mission.race and Mission.race.current_checkpoint or 1
+    Minimap.draw(renderer, Heightmap, ship, LandingPads, minimap_cargo, minimap_target, race_checkpoints, current_checkpoint)
     profile(" minimap")
 
     -- Draw HUD to software buffer (before blit)
@@ -693,7 +812,8 @@ function flight_scene.draw()
         mission = mission_data,
         mission_target = Mission.get_target(),
         current_location = nil,  -- TODO: detect current landing pad/building
-        is_repairing = false  -- TODO: add repair logic
+        is_repairing = false,  -- TODO: add repair logic
+        race_data = Mission.get_race_data()  -- Race HUD data (nil if not in race)
     })
     profile(" hud")
 
@@ -710,6 +830,7 @@ function flight_scene.keypressed(key)
     -- Handle mission complete - Q to return to menu
     if Mission.is_complete() and key == "q" then
         Mission.reset()
+        race_victory_mode = false  -- Reset victory mode
         if combat_active then
             Aliens.reset()
             Bullets.reset()
@@ -726,6 +847,7 @@ function flight_scene.keypressed(key)
             -- Return to menu from pause
             HUD.close_pause()
             Mission.reset()
+            race_victory_mode = false  -- Reset victory mode
             if combat_active then
                 Aliens.reset()
                 Bullets.reset()
@@ -754,17 +876,24 @@ function flight_scene.keypressed(key)
         cam.pitch = 0
         cam.yaw = 0
 
-        -- Reset mission if active
-        if Mission.is_active() and current_mission_num then
-            Mission.reset()
-            Missions.start(current_mission_num, Mission)
+        -- Reset victory mode
+        race_victory_mode = false
 
-            -- Reset combat for Mission 6
-            if current_mission_num == 6 then
-                Aliens.reset()
-                Bullets.reset()
-                Turret.reset()
-                wave_start_delay = 2.0
+        -- Reset mission or race if active
+        if Mission.is_active() then
+            Mission.reset()
+            if current_mission_num then
+                Missions.start(current_mission_num, Mission)
+
+                -- Reset combat for Mission 6
+                if current_mission_num == 6 then
+                    Aliens.reset()
+                    Bullets.reset()
+                    Turret.reset()
+                    wave_start_delay = 2.0
+                end
+            elseif current_track_num then
+                Missions.start_race_track(current_track_num, Mission)
             end
         end
 

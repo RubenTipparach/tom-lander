@@ -24,12 +24,32 @@ uniform float u_fogNear;
 uniform float u_fogFar;
 uniform vec3 u_fogColor;
 
+// Cascaded Shadow map uniforms
+uniform float u_shadowMapEnabled;
+// Near cascade (high detail, close range)
+uniform Image u_shadowMapNear;
+uniform mat4 u_lightViewMatrixNear;
+uniform mat4 u_lightProjMatrixNear;
+// Far cascade (lower detail, wide range)
+uniform Image u_shadowMapFar;
+uniform mat4 u_lightViewMatrixFar;
+uniform mat4 u_lightProjMatrixFar;
+// Cascade split distance
+uniform float u_cascadeSplit;  // Distance where we switch from near to far cascade
+uniform float u_shadowDebug;   // 1.0 = show debug colors (red=shadow, green=lit, yellow=near cascade)
+
+// Legacy uniforms (kept for compatibility, map to far cascade)
+uniform Image u_shadowMap;
+uniform mat4 u_lightViewMatrix;
+uniform mat4 u_lightProjMatrix;
+uniform float u_shadowDarkness;
+
 // Palette-based shadow uniforms
-uniform float u_usePaletteShadows;
-uniform float u_ditherPaletteShadows;
-uniform float u_shadowBrightnessMin;
-uniform float u_shadowBrightnessMax;
-uniform float u_shadowDitherRange;
+uniform float u_usePaletteShadows;  // 1.0 = palette shadows, 0.0 = RGB darkening
+uniform float u_ditherPaletteShadows;  // 1.0 = dither, 0.0 = hard levels
+uniform float u_shadowBrightnessMin;   // Brightness for darkest shadow
+uniform float u_shadowBrightnessMax;   // Brightness for original color
+uniform float u_shadowDitherRange;     // Range of blend where dithering occurs (0-1)
 uniform Image u_paletteShadowLookup;   // 32x8 texture: palette shadows lookup (x=color, y=level)
 
 #ifdef VERTEX
@@ -37,12 +57,14 @@ varying vec2 v_texCoord;
 varying vec4 v_color;
 varying float v_height;      // Raw height value for texture blending
 varying float v_viewDist;
+varying vec4 v_worldPos;     // World position for shadow map lookup
 
 vec4 position(mat4 transformProjection, vec4 vertexPosition) {
     vec4 worldPosition = modelMatrix * vertexPosition;
     vec4 viewPosition = viewMatrix * worldPosition;
     vec4 screenPosition = projectionMatrix * viewPosition;
 
+    v_worldPos = worldPosition;
     v_viewDist = length(viewPosition.xyz);
     v_texCoord = VaryingTexCoord.xy;
     v_color = VaryingColor;
@@ -62,6 +84,7 @@ varying vec2 v_texCoord;
 varying vec4 v_color;
 varying float v_height;
 varying float v_viewDist;
+varying vec4 v_worldPos;
 
 // Bayer 4x4 dithering matrix
 float getBayerValue(vec2 screenPos) {
@@ -118,6 +141,103 @@ bool isPaletteTextureValid() {
     return (white.r + white.g + white.b) > 2.0;
 }
 
+// Apply palette-based shadow to a color
+// combinedBrightness: 0.0 = darkest, 1.0 = brightest
+vec3 applyPaletteShadow(vec3 texColor, float combinedBrightness, vec2 screenCoords) {
+    // Find closest palette color for the texture color
+    int paletteIndex = findPaletteIndex(texColor);
+
+    // Map brightness to shadow level (0-7)
+    // Level 0 = brightest (original color), Level 7 = darkest shadow
+    float normalizedBrightness = clamp(
+        (combinedBrightness - u_shadowBrightnessMin) / (u_shadowBrightnessMax - u_shadowBrightnessMin),
+        0.0, 1.0
+    );
+
+    // INVERT: High brightness = low level (bright), Low brightness = high level (dark)
+    float levelFloat = (1.0 - normalizedBrightness) * 7.0;
+    float levelFloored = floor(levelFloat);
+    int level0 = int(levelFloored);
+    int level1 = level0 + 1;
+    if (level1 > 7) level1 = 7;
+    float blend = levelFloat - levelFloored;
+
+    // Get colors for the two adjacent levels from the lookup texture
+    vec2 uv0 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level0) + 0.5) / 8.0);
+    vec2 uv1 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level1) + 0.5) / 8.0);
+
+    vec3 color0 = Texel(u_paletteShadowLookup, uv0).rgb;
+    vec3 color1 = Texel(u_paletteShadowLookup, uv1).rgb;
+
+    // Choose between dithered and hard transition
+    if (u_ditherPaletteShadows > 0.5 && u_shadowDitherRange > 0.0) {
+        // Dithered transition between levels
+        float ditherRangeMin = 0.5 - u_shadowDitherRange * 0.5;
+        float ditherRangeMax = 0.5 + u_shadowDitherRange * 0.5;
+
+        if (blend < ditherRangeMin) {
+            return color0;
+        } else if (blend > ditherRangeMax) {
+            return color1;
+        } else {
+            // Within dither range - apply dithering
+            float normalizedBlend = (blend - ditherRangeMin) / (ditherRangeMax - ditherRangeMin);
+            float ditherThreshold = getBayerValue(screenCoords);
+            return (normalizedBlend > ditherThreshold) ? color1 : color0;
+        }
+    } else {
+        // Hard level cutoff (no dithering)
+        return color0;
+    }
+}
+
+// Sample shadow from a specific cascade
+// Returns 1.0 if in shadow, 0.0 if lit
+float sampleShadowCascade(vec4 worldPos, mat4 viewMat, mat4 projMat, Image shadowTex) {
+    // Transform world position to light clip space
+    vec4 lightViewPos = viewMat * worldPos;
+    vec4 lightClipPos = projMat * lightViewPos;
+
+    // Perspective divide
+    vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
+
+    // Convert from NDC (-1 to 1) to texture coordinates (0 to 1)
+    vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
+
+    // Check if outside shadow map bounds
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0) {
+        return 0.0;  // Outside shadow map = not in shadow
+    }
+
+    // Sample shadow map depth
+    float shadowMapDepth = Texel(shadowTex, shadowUV).r;
+
+    // Calculate current fragment's depth (same formula as shadow shader)
+    float currentDepth = lightNDC.z * 0.5 + 0.5;
+
+    // Shadow bias to prevent shadow acne (smaller = shadows work closer to ground)
+    float bias = 0.001;
+
+    // If current depth > shadow map depth + bias, we're in shadow
+    if (currentDepth > shadowMapDepth + bias) {
+        return 1.0;  // In shadow
+    }
+
+    return 0.0;  // Lit
+}
+
+// Sample cascaded shadow maps - near cascade for close, far cascade for distant
+float getShadowFactorCascaded(vec4 worldPos, float viewDist) {
+    if (u_shadowMapEnabled < 0.5) return 0.0;
+
+    // Use near cascade for close objects (higher detail)
+    if (viewDist < u_cascadeSplit) {
+        return sampleShadowCascade(worldPos, u_lightViewMatrixNear, u_lightProjMatrixNear, u_shadowMapNear);
+    }
+    // Use far cascade for distant objects (wider coverage)
+    return sampleShadowCascade(worldPos, u_lightViewMatrixFar, u_lightProjMatrixFar, u_shadowMapFar);
+}
+
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
     // Wrap UVs and do nearest-neighbor sampling
     vec2 wrappedUV = mod(v_texCoord, 1.0);
@@ -160,110 +280,94 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
     }
 
     // Check for fog FIRST - if fogged, skip all lighting/shadow calculations
-    bool isFogged = false;
     if (u_fogEnabled > 0.5 && v_viewDist > u_fogNear) {
         float fogFactor = clamp((v_viewDist - u_fogNear) / (u_fogFar - u_fogNear), 0.0, 1.0);
         float threshold = getBayerValue(screen_coords);
         if (fogFactor > threshold) {
-            isFogged = true;
             // Apply fog color immediately
-            if (u_usePaletteShadows > 0.5 && isPaletteTextureValid()) {
-                int fogPaletteIndex = findPaletteIndex(u_fogColor);
-                vec2 fogUV = vec2((float(fogPaletteIndex) + 0.5) / 32.0, 0.5 / 8.0);
-                texColor.rgb = Texel(u_paletteShadowLookup, fogUV).rgb;
-            } else {
-                texColor.rgb = u_fogColor;
-            }
+            texColor.rgb = u_fogColor;
             texColor.a = 1.0;
             return texColor;  // Skip all lighting/shadow processing
         }
     }
 
-    // Apply lighting - ALWAYS use palette path to prevent uniform optimization
+    // Apply lighting
     {
         float brightness = v_color.r;  // Brightness stored in RGB channels
 
-        // Check for unlit objects (brightness >= 0.999 means no lighting/shadows applied)
-        bool isUnlit = (brightness >= 0.999);
+        // DEBUG: Visualize cascaded shadow maps - press F4 to toggle
+        if (u_shadowDebug > 0.5 && u_shadowMapEnabled > 0.5) {
+            bool useNearCascade = (v_viewDist < u_cascadeSplit);
 
-        if (!isUnlit) {
+            vec4 lightViewPos;
+            vec4 lightClipPos;
+            float shadowMapDepth;
 
-        // Palette-based shadow mapping with 8 levels
-
-        // Find closest palette color for the texture color
-        int paletteIndex = findPaletteIndex(texColor.rgb);
-
-        // Map brightness to shadow level (0-7)
-        // Level 0 = brightest (original color), Level 7 = darkest shadow
-        float normalizedBrightness = clamp(
-            (brightness - u_shadowBrightnessMin) / (u_shadowBrightnessMax - u_shadowBrightnessMin),
-            0.0, 1.0
-        );
-
-        // INVERT: High brightness = low level (bright), Low brightness = high level (dark)
-        float levelFloat = (1.0 - normalizedBrightness) * 7.0;
-        float levelFloored = floor(levelFloat);
-        int level0 = int(levelFloored);
-        int level1 = level0 + 1;
-        if (level1 > 7) level1 = 7;
-        float blend = levelFloat - levelFloored;
-
-        // Get colors for the two adjacent levels from the lookup texture
-        // UV coordinates: x = (paletteIndex + 0.5) / 32, y = (level + 0.5) / 8
-        vec2 uv0 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level0) + 0.5) / 8.0);
-        vec2 uv1 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level1) + 0.5) / 8.0);
-
-        vec3 color0 = Texel(u_paletteShadowLookup, uv0).rgb;
-        vec3 color1 = Texel(u_paletteShadowLookup, uv1).rgb;
-
-        // Debug: Check if palette lookup is working
-        // If we get pure black from lookup but we're not sampling black palette
-        if (length(color0) < 0.01 && paletteIndex != 0) {
-            // Texture not working - use RGB fallback
-            texColor.rgb *= v_color.rgb;
-            return texColor;
-        }
-
-        // Choose between dithered and hard transition
-        if (u_ditherPaletteShadows > 0.5 && u_shadowDitherRange > 0.0) {
-            // Dithered transition between levels
-            float ditherRangeMin = 0.5 - u_shadowDitherRange * 0.5;
-            float ditherRangeMax = 0.5 + u_shadowDitherRange * 0.5;
-
-            if (blend < ditherRangeMin) {
-                // Below dither range - use color0
-                texColor.rgb = color0;
-            } else if (blend > ditherRangeMax) {
-                // Above dither range - use color1
-                texColor.rgb = color1;
+            if (useNearCascade) {
+                lightViewPos = u_lightViewMatrixNear * v_worldPos;
+                lightClipPos = u_lightProjMatrixNear * lightViewPos;
             } else {
-                // Within dither range - apply dithering
-                float normalizedBlend = (blend - ditherRangeMin) / (ditherRangeMax - ditherRangeMin);
-                float ditherThreshold = getBayerValue(screen_coords);
-                texColor.rgb = (normalizedBlend > ditherThreshold) ? color1 : color0;
+                lightViewPos = u_lightViewMatrixFar * v_worldPos;
+                lightClipPos = u_lightProjMatrixFar * lightViewPos;
             }
+
+            vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
+            vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
+
+            if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0) {
+                return vec4(0.0, 0.0, 1.0, 1.0);  // Blue = outside shadow map
+            }
+
+            if (useNearCascade) {
+                shadowMapDepth = Texel(u_shadowMapNear, shadowUV).r;
+            } else {
+                shadowMapDepth = Texel(u_shadowMapFar, shadowUV).r;
+            }
+
+            float currentDepth = lightNDC.z * 0.5 + 0.5;
+
+            // Distinct colors: Near=orange/yellow, Far=red/green
+            if (currentDepth > shadowMapDepth + 0.001) {
+                // SHADOW
+                if (useNearCascade) {
+                    return vec4(1.0, 0.5, 0.0, 1.0);  // Orange = near cascade shadow
+                } else {
+                    return vec4(1.0, 0.0, 0.0, 1.0);  // Red = far cascade shadow
+                }
+            } else {
+                // LIT
+                if (useNearCascade) {
+                    return vec4(1.0, 1.0, 0.0, 1.0);  // Yellow = near cascade lit
+                } else {
+                    return vec4(0.0, 1.0, 0.0, 1.0);  // Green = far cascade lit
+                }
+            }
+        }
+
+        // Get shadow factor (0 = lit, 1 = in shadow)
+        float shadowFactor = 0.0;
+        if (u_shadowMapEnabled > 0.5) {
+            shadowFactor = getShadowFactorCascaded(v_worldPos, v_viewDist);
+        }
+
+        // Combine directional light brightness with shadow
+        // Shadow reduces brightness further (multiply by shadow darkness factor)
+        float combinedBrightness = brightness;
+        if (shadowFactor > 0.5) {
+            combinedBrightness *= u_shadowDarkness;  // Darken in shadow
+        }
+
+        // Apply lighting using palette shadows or RGB darkening
+        if (u_usePaletteShadows > 0.5 && isPaletteTextureValid()) {
+            // Palette-based shadow with dithering
+            texColor.rgb = applyPaletteShadow(texColor.rgb, combinedBrightness, screen_coords);
         } else {
-            // Hard level cutoff (no dithering)
-            texColor.rgb = color0;
+            // Fallback: RGB darkening
+            texColor.rgb *= combinedBrightness;
         }
 
-        // Apply result based on mode
-        if (u_usePaletteShadows < 0.5) {
-            // Palette shadows disabled - use traditional RGB darkening instead
-            texColor.rgb *= v_color.rgb;
-        }
-
-        } // End of !isUnlit block
-
-        // NOTE: Terrain doesn't use alpha for transparency
-        // v_color.a contains height data, not transparency
-        // So we don't touch texColor.a for terrain
         texColor.a = 1.0;  // Terrain is always fully opaque
     }
-
-    // NOTE: Fog is now applied at the beginning of the shader (before lighting/shadows)
-    // to ensure fog always overrides terrain colors
-    // NOTE: Terrain doesn't use alpha transparency - alpha stores height data
 
     return texColor;
 }

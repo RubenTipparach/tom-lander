@@ -14,7 +14,7 @@ config.GOURAUD_SHADING = true   -- Set to true for per-vertex lighting (smooth),
 -- ===========================================
 -- Light direction: 60° up from East horizon
 -- East = +X, 60° elevation: X = cos(60°) = 0.5, Y = -sin(60°) = -0.866, Z = 0
-config.LIGHT_DIRECTION = {-0.866, 0.5, 0.0}  -- Directional light from 60° up, East (normalized automatically)
+config.LIGHT_DIRECTION = {-0.866, 0.5, -0.2}  -- Directional light from 60° up, East (normalized automatically)
 config.LIGHT_INTENSITY = 1.0               -- Directional light brightness (0-1)
 config.AMBIENT_LIGHT = 0.55                -- Ambient light level (0-1)
 config.USE_PALETTE_SHADOWS = true          -- Use palette-based shadows instead of RGB darkening
@@ -179,5 +179,20 @@ config.WIND_ARROW_COLOR_SPEED = 4            -- Brightness pulsating speed
 config.WIND_ARROW_COLOR_R = 60               -- Base red color (blue arrow)
 config.WIND_ARROW_COLOR_G = 140              -- Base green color
 config.WIND_ARROW_COLOR_B = 255              -- Base blue color
+
+-- ===========================================
+-- SHADOW MAP SETTINGS
+-- ===========================================
+config.SHADOWS_ENABLED = true                -- Master toggle for shadows
+config.SHADOW_DARKNESS = 0.6                 -- Shadow darkness (0 = black, 1 = no change)
+config.SHADOW_MAP_SIZE = 1024                -- Shadow map resolution (1024 or 2048)
+config.SHADOW_DEPTH_RANGE = 500              -- Depth range for shadow map (how far light can reach)
+config.SHADOW_BIAS = 0.0002                   -- Depth bias (smaller = shadows work closer to ground, but may cause acne)
+
+-- Cascade settings (2 cascades: near = high detail, far = wide coverage)
+config.SHADOW_CASCADE_ENABLED = true         -- Enable cascaded shadow maps
+config.SHADOW_CASCADE_SPLIT = 15             -- Distance where near cascade ends and far begins
+config.SHADOW_NEAR_COVERAGE = 20             -- Near cascade coverage (smaller = higher quality close shadows)
+config.SHADOW_FAR_COVERAGE = 120             -- Far cascade coverage (larger = shadows visible further)
 
 return config

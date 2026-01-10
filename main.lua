@@ -55,6 +55,13 @@ function love.keypressed(key)
         return
     end
 
+    -- F4 toggles shadow debug visualization
+    if key == "f4" then
+        local enabled = renderer.toggleShadowDebug()
+        print("Shadow Debug: " .. (enabled and "ON" or "OFF"))
+        return
+    end
+
     -- Ctrl+C copies profiler data to clipboard (when profiler is enabled)
     if key == "c" and love.keyboard.isDown("lctrl", "rctrl") then
         if profile.is_enabled() then
