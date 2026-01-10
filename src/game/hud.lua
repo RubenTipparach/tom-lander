@@ -376,6 +376,144 @@ function HUD.draw_repair_indicator(is_repairing)
     end
 end
 
+-- Draw race HUD (timer bar, lap counter) or race complete stats
+function HUD.draw_race_hud(race_data)
+    if not race_data then return end
+
+    local screen_w = config.RENDER_WIDTH or 480
+    local screen_h = config.RENDER_HEIGHT or 270
+
+    -- Race complete: show lap time stats instead of timer
+    if race_data.complete then
+        HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
+        return
+    end
+
+    -- Timer bar position (top center)
+    local bar_width = 150
+    local bar_height = 12
+    local bar_x = (screen_w - bar_width) / 2
+    local bar_y = 60
+
+    -- Calculate timer progress
+    local timer_percent = race_data.checkpoint_timer / race_data.checkpoint_max_time
+    timer_percent = math.max(0, math.min(1, timer_percent))
+
+    -- Timer bar color (green -> yellow -> red as time runs out)
+    local timer_color
+    if timer_percent > 0.5 then
+        timer_color = COLOR_GREEN
+    elseif timer_percent > 0.25 then
+        timer_color = COLOR_YELLOW
+    else
+        timer_color = COLOR_RED
+    end
+
+    -- Background
+    renderer.drawRectFill(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height,
+                          COLOR_DARK_BLUE[1], COLOR_DARK_BLUE[2], COLOR_DARK_BLUE[3])
+
+    -- Timer fill
+    local fill_width = bar_width * timer_percent
+    if fill_width > 0 then
+        renderer.drawRectFill(bar_x, bar_y, bar_x + fill_width, bar_y + bar_height,
+                              timer_color[1], timer_color[2], timer_color[3])
+    end
+
+    -- Border
+    renderer.drawRect(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height,
+                      COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3])
+
+    -- Timer text (centered on bar)
+    local timer_text = string.format("%.1f", math.max(0, race_data.checkpoint_timer))
+    local text_x = bar_x + (bar_width - #timer_text * 5) / 2
+    renderer.drawText(text_x, bar_y + 2, timer_text,
+                      COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
+
+    -- Lap counter (above timer bar)
+    local lap_text = "LAP " .. race_data.current_lap .. "/" .. race_data.total_laps
+    local lap_x = (screen_w - #lap_text * 6) / 2
+    renderer.drawText(lap_x, bar_y - 12, lap_text,
+                      COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+
+    -- Total time (below timer bar)
+    local total_minutes = math.floor(race_data.total_time / 60)
+    local total_seconds = race_data.total_time % 60
+    local time_text = string.format("%d:%05.2f", total_minutes, total_seconds)
+    local time_x = (screen_w - #time_text * 5) / 2
+    renderer.drawText(time_x, bar_y + bar_height + 4, time_text,
+                      COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+
+    -- Checkpoint flash effect
+    if race_data.checkpoint_flash and race_data.checkpoint_flash > 0 then
+        -- Flash "CHECKPOINT!" text
+        local flash_text = "CHECKPOINT!"
+        local flash_x = (screen_w - #flash_text * 6) / 2
+        renderer.drawText(flash_x, bar_y - 24, flash_text,
+                          COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
+    end
+
+    -- Failed state
+    if race_data.failed then
+        local fail_text = "TIME'S UP!"
+        local fail_x = (screen_w - #fail_text * 6) / 2
+        -- Flash the text
+        if math.floor(love.timer.getTime() * 4) % 2 == 0 then
+            renderer.drawText(fail_x, bar_y - 24, fail_text,
+                              COLOR_RED[1], COLOR_RED[2], COLOR_RED[3], 1, true)
+        end
+    end
+end
+
+-- Draw race complete stats (lap times, best lap, total time)
+function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
+    local center_x = screen_w / 2
+    local start_y = 50
+
+    -- "RACE COMPLETE!" header with pulsing effect
+    local pulse = 0.7 + 0.3 * math.sin(love.timer.getTime() * 4)
+    local header_text = "RACE COMPLETE!"
+    local header_x = center_x - (#header_text * 6) / 2
+    renderer.drawText(header_x, start_y, header_text,
+                      math.floor(255 * pulse), math.floor(255 * pulse), 0, 1, true)
+
+    -- Total time
+    local total_minutes = math.floor(race_data.total_time / 60)
+    local total_seconds = race_data.total_time % 60
+    local total_text = "TOTAL: " .. string.format("%d:%05.2f", total_minutes, total_seconds)
+    local total_x = center_x - (#total_text * 6) / 2
+    renderer.drawText(total_x, start_y + 20, total_text,
+                      COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
+
+    -- Lap times
+    local lap_y = start_y + 45
+    local lap_times = race_data.lap_times or {}
+
+    for i, lap_time in ipairs(lap_times) do
+        local lap_min = math.floor(lap_time / 60)
+        local lap_sec = lap_time % 60
+        local lap_text = "LAP " .. i .. ": " .. string.format("%d:%05.2f", lap_min, lap_sec)
+
+        -- Highlight best lap in green
+        local color = COLOR_GREY
+        if i == race_data.best_lap_num then
+            color = COLOR_GREEN
+            lap_text = lap_text .. " BEST"
+        end
+
+        local lap_x = center_x - (#lap_text * 5) / 2
+        renderer.drawText(lap_x, lap_y, lap_text,
+                          color[1], color[2], color[3], 1, true)
+        lap_y = lap_y + 12
+    end
+
+    -- "Press Q to return" at bottom
+    local return_text = "[Q] RETURN TO MENU"
+    local return_x = center_x - (#return_text * 5) / 2
+    renderer.drawText(return_x, screen_h - 30, return_text,
+                      COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+end
+
 -- Draw WASD thruster indicator
 -- Projects thruster positions to screen space and draws key letters on top
 function HUD.draw_thruster_indicator(ship)
@@ -459,6 +597,11 @@ function HUD.draw(ship, camera, opts)
 
     -- Draw repair indicator
     HUD.draw_repair_indicator(opts.is_repairing)
+
+    -- Draw race HUD (timer bar, lap counter)
+    if opts.race_data then
+        HUD.draw_race_hud(opts.race_data)
+    end
 
     -- Draw thruster indicator (WASD keys showing which thrusters are firing)
     -- Skip when paused so pause menu isn't obscured

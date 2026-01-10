@@ -128,23 +128,61 @@ local function createShadowMatrices(camX, camY, camZ, coverage)
     local cfg = getConfig()
     local halfSize = coverage
     local depthRange = cfg.DEPTH_RANGE
+    local mapSize = cfg.MAP_SIZE
 
-    local projMatrix = mat4.orthographic(-halfSize, halfSize, -halfSize, halfSize, SHADOW_NEAR, depthRange)
+    -- Calculate world units per texel for snapping (prevents shadow swimming)
+    local worldUnitsPerTexel = (halfSize * 2) / mapSize
+
+    -- Build light space axes (same as lookAt but we need them separately for snapping)
+    -- Forward vector (light looking toward scene)
+    local fwdX, fwdY, fwdZ = -lightDir[1], -lightDir[2], -lightDir[3]
+
+    -- Right vector (cross product of forward and world up)
+    local upX, upY, upZ = 0, 1, 0
+    local rightX = fwdY * upZ - fwdZ * upY
+    local rightY = fwdZ * upX - fwdX * upZ
+    local rightZ = fwdX * upY - fwdY * upX
+    local rightLen = math.sqrt(rightX*rightX + rightY*rightY + rightZ*rightZ)
+    if rightLen > 0.001 then
+        rightX, rightY, rightZ = rightX/rightLen, rightY/rightLen, rightZ/rightLen
+    end
+
+    -- Recalculate up vector (cross product of right and forward)
+    local newUpX = rightY * fwdZ - rightZ * fwdY
+    local newUpY = rightZ * fwdX - rightX * fwdZ
+    local newUpZ = rightX * fwdY - rightY * fwdX
+
+    -- Project camera position onto light space XY plane for snapping
+    -- lightSpaceX = dot(camPos, right)
+    -- lightSpaceY = dot(camPos, newUp)
+    local lightSpaceX = camX * rightX + camY * rightY + camZ * rightZ
+    local lightSpaceY = camX * newUpX + camY * newUpY + camZ * newUpZ
+
+    -- Snap to texel grid
+    lightSpaceX = math.floor(lightSpaceX / worldUnitsPerTexel) * worldUnitsPerTexel
+    lightSpaceY = math.floor(lightSpaceY / worldUnitsPerTexel) * worldUnitsPerTexel
+
+    -- Convert snapped position back to world space
+    local snappedX = lightSpaceX * rightX + lightSpaceY * newUpX
+    local snappedY = lightSpaceX * rightY + lightSpaceY * newUpY
+    local snappedZ = lightSpaceX * rightZ + lightSpaceY * newUpZ
 
     -- Position light far enough to cover the depth range
     local lightDist = depthRange * 0.5
 
-    -- Position light in direction of lightDir from camera position
-    local lightPosX = camX + lightDir[1] * lightDist
-    local lightPosY = camY + lightDir[2] * lightDist
-    local lightPosZ = camZ + lightDir[3] * lightDist
+    -- Position light in direction of lightDir from snapped position
+    local lightPosX = snappedX + lightDir[1] * lightDist
+    local lightPosY = snappedY + lightDir[2] * lightDist
+    local lightPosZ = snappedZ + lightDir[3] * lightDist
 
-    -- Look-at matrix: from light position, looking at camera
+    -- Look-at matrix: from light position, looking at snapped target
     local viewMatrix = mat4.lookAt(
         lightPosX, lightPosY, lightPosZ,
-        camX, camY, camZ,
+        snappedX, snappedY, snappedZ,
         0, 1, 0  -- Up vector
     )
+
+    local projMatrix = mat4.orthographic(-halfSize, halfSize, -halfSize, halfSize, SHADOW_NEAR, depthRange)
 
     return viewMatrix, projMatrix
 end

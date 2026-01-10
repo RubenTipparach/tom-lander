@@ -167,6 +167,53 @@ function Missions.start_mission_6(Mission)
     end
 end
 
+-- Racing: Time Trial Track
+-- Race through checkpoints around the map, 3 laps
+function Missions.start_race_track(track_num, Mission)
+    Mission.mission_name = "Time Trial"
+    Mission.active = true
+    Mission.complete_flag = false
+    Mission.type = "race"
+    Mission.current_mission_num = nil  -- Racing is not a campaign mission
+
+    -- Define checkpoints (world coordinates)
+    -- Map is 128x128 tiles at 4 units per tile = 512x512 world units centered at 0,0
+    -- So valid coords are roughly -256 to +256
+    Mission.race_checkpoints = {
+        {x = 0, z = 0, time = 30, name = "Start/Finish"},           -- Landing Pad A (center)
+        {x = -80, z = -60, time = 25, name = "Fuel Depot"},         -- Southwest
+        {x = -120, z = 40, time = 30, name = "Research Station"},   -- Northwest
+        {x = -40, z = 120, time = 35, name = "Mining Platform"},    -- North
+        {x = 80, z = 100, time = 25, name = "Relay Tower"},         -- Northeast
+        {x = 140, z = 0, time = 30, name = "Cargo Bay"},            -- East
+        {x = 80, z = -100, time = 25, name = "Power Station"},      -- Southeast
+        {x = 0, z = -80, time = 30, name = "Final Stretch"},        -- South, back to start
+    }
+
+    -- Race state
+    Mission.race = {
+        current_checkpoint = 1,
+        current_lap = 1,
+        total_laps = 3,
+        checkpoint_timer = Mission.race_checkpoints[1].time,
+        total_time = 0,
+        checkpoint_radius = 12,  -- Detection radius
+        checkpoint_flash = 0,    -- Visual feedback timer
+        failed = false,
+    }
+
+    -- Set first checkpoint as target
+    local first_cp = Mission.race_checkpoints[1]
+    Mission.current_target = {x = first_cp.x, z = first_cp.z}
+
+    Mission.current_objectives = {
+        "LAP 1/3 - Checkpoint 1/" .. #Mission.race_checkpoints,
+        "Time: " .. Mission.race.checkpoint_timer .. "s",
+        "Fly through the checkpoints!",
+        "[TAB] Menu  [C] Show Controls"
+    }
+end
+
 -- Start a mission by number
 function Missions.start(mission_num, Mission)
     Mission.reset()

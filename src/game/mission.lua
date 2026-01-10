@@ -60,6 +60,11 @@ Mission.hover_duration = 0
 Mission.mission_name = ""
 Mission.current_mission_num = nil
 
+-- Race state (set by missions.lua for mission 7)
+Mission.race = nil
+Mission.race_checkpoints = nil
+Mission.race_complete = false  -- True when race is finished (for victory screen)
+
 -- Initialize a hover mission (take off, hover, land)
 function Mission.start_hover_mission(hover_duration, landing_pad_x, landing_pad_z, landing_pad_id)
     Mission.active = true
@@ -157,6 +162,12 @@ function Mission.update(dt, ship, current_landing_pad)
     local ship_landed = current_landing_pad ~= nil
     local engines_off = not ship.thrusting
 
+    -- Handle race mission
+    if Mission.type == "race" then
+        Mission.update_race(dt, ship_x, ship_z)
+        return
+    end
+
     -- Handle hover mission
     if Mission.type == "hover" then
         local is_on_pad = current_landing_pad ~= nil
@@ -234,6 +245,116 @@ function Mission.update(dt, ship, current_landing_pad)
     end
 end
 
+-- Update race mission
+function Mission.update_race(dt, ship_x, ship_z)
+    if not Mission.race or not Mission.race_checkpoints then return end
+    if Mission.race.failed then return end
+
+    local race = Mission.race
+    local checkpoints = Mission.race_checkpoints
+
+    -- Update checkpoint flash timer
+    if race.checkpoint_flash > 0 then
+        race.checkpoint_flash = race.checkpoint_flash - dt
+    end
+
+    -- Update total time
+    race.total_time = race.total_time + dt
+
+    -- Countdown checkpoint timer
+    race.checkpoint_timer = race.checkpoint_timer - dt
+
+    -- Check for timeout
+    if race.checkpoint_timer <= 0 then
+        race.failed = true
+        Mission.complete_flag = true  -- Allow returning to menu with Q
+        Mission.current_objectives = {
+            "TIME'S UP!",
+            "Total time: " .. string.format("%.1f", race.total_time) .. "s",
+            "",
+            "[Q] Return to Menu"
+        }
+        return
+    end
+
+    -- Check distance to current checkpoint
+    local cp = checkpoints[race.current_checkpoint]
+    local dx = ship_x - cp.x
+    local dz = ship_z - cp.z
+    local dist = math.sqrt(dx * dx + dz * dz)
+
+    if dist < race.checkpoint_radius then
+        -- Checkpoint reached!
+        race.checkpoint_flash = 0.5  -- Flash for 0.5 seconds
+
+        -- Advance to next checkpoint
+        race.current_checkpoint = race.current_checkpoint + 1
+
+        if race.current_checkpoint > #checkpoints then
+            -- Completed all checkpoints in this lap - record lap time
+            local lap_time = race.total_time - (race.lap_start_time or 0)
+            race.lap_times = race.lap_times or {}
+            table.insert(race.lap_times, lap_time)
+
+            race.current_checkpoint = 1
+            race.current_lap = race.current_lap + 1
+            race.lap_start_time = race.total_time  -- Start time for next lap
+
+            if race.current_lap > race.total_laps then
+                -- Race complete!
+                Mission.complete_race()
+                return
+            end
+        end
+
+        -- Reset timer for next checkpoint
+        local next_cp = checkpoints[race.current_checkpoint]
+        race.checkpoint_timer = next_cp.time
+
+        -- Update target to next checkpoint
+        Mission.current_target = {x = next_cp.x, z = next_cp.z}
+    end
+
+    -- Update objectives display
+    Mission.current_objectives = {
+        "LAP " .. race.current_lap .. "/" .. race.total_laps ..
+            " - CP " .. race.current_checkpoint .. "/" .. #checkpoints,
+        "Time: " .. string.format("%.1f", math.max(0, race.checkpoint_timer)) .. "s",
+        checkpoints[race.current_checkpoint].name,
+        "[TAB] Menu"
+    }
+end
+
+-- Complete race mission
+function Mission.complete_race()
+    Mission.complete_flag = true
+    Mission.race_complete = true  -- Signal victory screen mode
+
+    -- Find best lap
+    local lap_times = Mission.race.lap_times or {}
+    local best_lap = nil
+    local best_lap_num = 0
+    for i, t in ipairs(lap_times) do
+        if not best_lap or t < best_lap then
+            best_lap = t
+            best_lap_num = i
+        end
+    end
+    Mission.race.best_lap = best_lap
+    Mission.race.best_lap_num = best_lap_num
+
+    local total_time = Mission.race.total_time
+    local minutes = math.floor(total_time / 60)
+    local seconds = total_time % 60
+
+    Mission.current_objectives = {
+        "RACE COMPLETE!",
+        "Total time: " .. minutes .. ":" .. string.format("%05.2f", seconds),
+        "",
+        "[Q] Return to Menu"
+    }
+end
+
 -- Complete the mission
 function Mission.complete()
     Mission.complete_flag = true
@@ -276,6 +397,10 @@ function Mission.reset()
     Mission.cargo_just_delivered = false
     Mission.show_pause_menu = false
     Mission.current_mission_num = nil
+    -- Reset race state
+    Mission.race = nil
+    Mission.race_checkpoints = nil
+    Mission.race_complete = false
 end
 
 -- Get mission data for HUD
@@ -445,6 +570,122 @@ function Mission.draw_guide_arrow(renderer, cam_x, cam_y, cam_z)
         {center_x, h2, center_z},
         r, g, b, skip_depth
     )
+end
+
+-- Draw 3D checkpoint markers for race mission
+function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
+    if Mission.type ~= "race" or not Mission.race_checkpoints then return end
+    if not Mission.race then return end
+
+    local race = Mission.race
+    local checkpoints = Mission.race_checkpoints
+    local time = love.timer.getTime()
+
+    for i, cp in ipairs(checkpoints) do
+        -- Distance culling
+        local dx = cp.x - cam_x
+        local dz = cp.z - cam_z
+        local dist = math.sqrt(dx * dx + dz * dz)
+        if dist < 150 then  -- Only draw within 150 units
+
+            -- Get ground height at checkpoint
+            local ground_y = 0
+            if heightmap and heightmap.get_height then
+                ground_y = heightmap.get_height(cp.x, cp.z)
+            end
+
+            -- Checkpoint ring properties
+            local ring_radius = race.checkpoint_radius * 0.8
+            local ring_height = ground_y + 8  -- 8 units above ground
+            local segments = 12
+
+            -- Color based on checkpoint state
+            local r, g, b
+            if i == race.current_checkpoint then
+                -- Current checkpoint: pulsing yellow/orange
+                local pulse = 0.7 + 0.3 * math.sin(time * 6)
+                r = math.floor(255 * pulse)
+                g = math.floor(200 * pulse)
+                b = 0
+            elseif i < race.current_checkpoint then
+                -- Passed checkpoint: dim green
+                r, g, b = 40, 100, 40
+            else
+                -- Future checkpoint: dim cyan
+                r, g, b = 40, 80, 100
+            end
+
+            -- Draw ring (horizontal circle)
+            for seg = 1, segments do
+                local angle1 = (seg - 1) * (2 * math.pi / segments)
+                local angle2 = seg * (2 * math.pi / segments)
+
+                local x1 = cp.x + math.cos(angle1) * ring_radius
+                local z1 = cp.z + math.sin(angle1) * ring_radius
+                local x2 = cp.x + math.cos(angle2) * ring_radius
+                local z2 = cp.z + math.sin(angle2) * ring_radius
+
+                renderer.drawLine3D(
+                    {x1, ring_height, z1},
+                    {x2, ring_height, z2},
+                    r, g, b, false
+                )
+
+                -- Draw vertical pillar lines for current checkpoint
+                if i == race.current_checkpoint then
+                    renderer.drawLine3D(
+                        {x1, ground_y + 0.5, z1},
+                        {x1, ring_height, z1},
+                        r, g, b, false
+                    )
+                end
+            end
+
+            -- Draw a second ring above for 3D effect (current checkpoint only)
+            if i == race.current_checkpoint then
+                local upper_height = ring_height + 3
+                for seg = 1, segments do
+                    local angle1 = (seg - 1) * (2 * math.pi / segments)
+                    local angle2 = seg * (2 * math.pi / segments)
+
+                    local x1 = cp.x + math.cos(angle1) * ring_radius
+                    local z1 = cp.z + math.sin(angle1) * ring_radius
+                    local x2 = cp.x + math.cos(angle2) * ring_radius
+                    local z2 = cp.z + math.sin(angle2) * ring_radius
+
+                    renderer.drawLine3D(
+                        {x1, upper_height, z1},
+                        {x2, upper_height, z2},
+                        r, g, b, false
+                    )
+                end
+            end
+        end
+    end
+end
+
+-- Get race data for HUD
+function Mission.get_race_data()
+    if Mission.type ~= "race" or not Mission.race then
+        return nil
+    end
+    return {
+        current_checkpoint = Mission.race.current_checkpoint,
+        total_checkpoints = Mission.race_checkpoints and #Mission.race_checkpoints or 0,
+        current_lap = Mission.race.current_lap,
+        total_laps = Mission.race.total_laps,
+        checkpoint_timer = Mission.race.checkpoint_timer,
+        checkpoint_max_time = Mission.race_checkpoints and
+            Mission.race_checkpoints[Mission.race.current_checkpoint] and
+            Mission.race_checkpoints[Mission.race.current_checkpoint].time or 30,
+        total_time = Mission.race.total_time,
+        checkpoint_flash = Mission.race.checkpoint_flash,
+        failed = Mission.race.failed,
+        complete = Mission.race_complete,
+        lap_times = Mission.race.lap_times or {},
+        best_lap = Mission.race.best_lap,
+        best_lap_num = Mission.race.best_lap_num,
+    }
 end
 
 return Mission

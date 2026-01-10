@@ -70,12 +70,16 @@ menu.active = true
 menu.show_options = false
 menu.show_mode_select = false
 menu.show_campaign = false  -- Campaign submenu
+menu.show_racing = false    -- Racing track selection submenu
 menu.selected_option = 1
 menu.selected_mode = 1  -- 1 = Arcade, 2 = Simulation
 menu.pending_mission = nil
+menu.pending_track = nil    -- Track number for racing
 menu.options = {}
 menu.campaign_options = {}  -- Campaign mission list
+menu.racing_options = {}    -- Racing track list
 menu.selected_campaign = 1
+menu.selected_racing = 1
 menu.mission_progress = {}
 menu.splash_fade = 0
 
@@ -293,12 +297,30 @@ function menu.update_options()
 
     -- Main menu options
     table.insert(menu.options, {text = "CAMPAIGN", action = "campaign", locked = false})
+    table.insert(menu.options, {text = "RACING", action = "racing", locked = false})
     table.insert(menu.options, {text = "FREE FLIGHT", action = "free_flight", locked = false})
     table.insert(menu.options, {text = "QUIT", action = "quit", locked = false})
 
     -- Clamp selected option
     if menu.selected_option > #menu.options then
         menu.selected_option = #menu.options
+    end
+end
+
+-- Update racing track options
+function menu.update_racing_options()
+    menu.racing_options = {}
+
+    -- Track list
+    table.insert(menu.racing_options, {text = "TRACK 1: CIRCUIT", track = 1, locked = false})
+    -- Future tracks can be added here
+    -- table.insert(menu.racing_options, {text = "TRACK 2: [LOCKED]", track = 2, locked = true})
+
+    table.insert(menu.racing_options, {text = "BACK", action = "back", locked = false})
+
+    -- Clamp selected racing option
+    if menu.selected_racing > #menu.racing_options then
+        menu.selected_racing = #menu.racing_options
     end
 end
 
@@ -377,10 +399,13 @@ function menu.load()
     menu.show_options = false
     menu.show_mode_select = false
     menu.show_campaign = false
+    menu.show_racing = false
     menu.selected_option = 1
     menu.selected_campaign = 1
+    menu.selected_racing = 1
     menu.selected_mode = 1
     menu.pending_mission = nil
+    menu.pending_track = nil
 
     -- Load mission progress from save file
     SaveData.init()
@@ -388,6 +413,7 @@ function menu.load()
 
     menu.update_options()
     menu.update_campaign_options()
+    menu.update_racing_options()
 
     -- Only initialize 3D rendering if enabled in config
     if config.MENU_3D_ENABLED then
@@ -516,6 +542,7 @@ function menu.select_option()
         -- Go directly to free flight mode
         menu.active = false
         menu.pending_mission = nil  -- No mission
+        menu.pending_track = nil    -- No racing track
         menu.game_mode = "arcade"
         scene_manager.switch("flight")
     elseif option.action == "campaign" then
@@ -526,6 +553,12 @@ function menu.select_option()
         menu.show_options = false
         menu.selected_campaign = 1
         menu.update_campaign_options()
+    elseif option.action == "racing" then
+        -- Show racing track selection
+        menu.show_racing = true
+        menu.show_options = false
+        menu.selected_racing = 1
+        menu.update_racing_options()
     elseif option.action == "quit" then
         love.event.quit()
     end
@@ -544,6 +577,7 @@ function menu.select_campaign_option()
     if option.mission then
         -- Show mode selection screen
         menu.pending_mission = option.mission
+        menu.pending_track = nil  -- Clear any racing track
         menu.show_mode_select = true
         menu.show_campaign = false
         menu.selected_mode = 1
@@ -565,12 +599,37 @@ function menu.select_campaign_option()
     return nil
 end
 
+-- Select racing track
+function menu.select_racing_option()
+    local option = menu.racing_options[menu.selected_racing]
+
+    if option.locked then
+        return nil
+    end
+
+    if option.track then
+        -- Start racing mode with selected track
+        menu.pending_track = option.track
+        menu.pending_mission = nil  -- Clear any campaign mission
+        menu.show_mode_select = true
+        menu.show_racing = false
+        menu.selected_mode = 1
+    elseif option.action == "back" then
+        -- Go back to main menu
+        menu.show_racing = false
+        menu.show_options = true
+    end
+
+    return nil
+end
+
 -- Select game mode
 function menu.select_mode()
     menu.active = false
     local mode = (menu.selected_mode == 1) and "arcade" or "simulation"
-    -- Store selected mission and mode for the flight scene
+    -- Store selected mission/track and mode for the flight scene
     menu.selected_mission = menu.pending_mission
+    menu.selected_track = menu.pending_track
     menu.game_mode = mode
     scene_manager.switch("flight")
 end
@@ -628,7 +687,7 @@ function menu.keypressed(key)
     if not menu.active then return end
 
     -- Title screen - press to continue
-    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign then
+    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign and not menu.show_racing then
         if key == "z" or key == "x" or key == "return" then
             menu.show_options = true
         end
@@ -643,8 +702,49 @@ function menu.keypressed(key)
             menu.select_mode()
         elseif key == "tab" or key == "escape" then
             menu.show_mode_select = false
-            menu.show_campaign = true  -- Go back to campaign list
-            menu.pending_mission = nil
+            -- Go back to the appropriate submenu
+            if menu.pending_track then
+                menu.show_racing = true
+                menu.pending_track = nil
+            else
+                menu.show_campaign = true
+                menu.pending_mission = nil
+            end
+        end
+        return
+    end
+
+    -- Racing track selection screen
+    if menu.show_racing then
+        if key == "up" then
+            menu.selected_racing = menu.selected_racing - 1
+            if menu.selected_racing < 1 then
+                menu.selected_racing = #menu.racing_options
+            end
+            -- Skip locked options
+            while menu.racing_options[menu.selected_racing].locked do
+                menu.selected_racing = menu.selected_racing - 1
+                if menu.selected_racing < 1 then
+                    menu.selected_racing = #menu.racing_options
+                end
+            end
+        elseif key == "down" then
+            menu.selected_racing = menu.selected_racing + 1
+            if menu.selected_racing > #menu.racing_options then
+                menu.selected_racing = 1
+            end
+            -- Skip locked options
+            while menu.racing_options[menu.selected_racing].locked do
+                menu.selected_racing = menu.selected_racing + 1
+                if menu.selected_racing > #menu.racing_options then
+                    menu.selected_racing = 1
+                end
+            end
+        elseif key == "z" or key == "x" or key == "return" or key == "space" then
+            menu.select_racing_option()
+        elseif key == "tab" or key == "escape" then
+            menu.show_racing = false
+            menu.show_options = true
         end
         return
     end
@@ -776,6 +876,8 @@ function menu.draw()
             menu.draw_mode_select()
         elseif menu.show_campaign then
             menu.draw_campaign()
+        elseif menu.show_racing then
+            menu.draw_racing()
         elseif menu.show_options then
             menu.draw_options()
         else
@@ -787,7 +889,7 @@ function menu.draw()
     end
 
     -- Draw logo on top (Love2D image, drawn after software render) - only on title screen
-    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign then
+    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign and not menu.show_racing then
         -- Title screen - draw logo
         if logoImage then
             love.graphics.push()
@@ -1057,6 +1159,62 @@ function menu.draw_campaign()
         end
 
         local prefix = (i == menu.selected_campaign) and "> " or "  "
+        renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
+    end
+
+    -- Draw hint at bottom
+    local hint = "[TAB] Back"
+    local hint_c = Palette.colors[6] or {200, 200, 200}
+    renderer.drawText(box_x + 10, box_y + box_height - 15, hint, hint_c[1], hint_c[2], hint_c[3], 1, true)
+end
+
+-- Draw racing track selection screen (uses software renderer pixel font)
+function menu.draw_racing()
+    -- Use render resolution as source of truth (480x270)
+    local w, h = config.RENDER_WIDTH, config.RENDER_HEIGHT
+
+    local menu_y = 50
+
+    -- Calculate box dimensions
+    local box_padding = 10
+    local title = "RACING"
+    local title_width = #title * 5
+    local max_option_width = 0
+    for i, option in ipairs(menu.racing_options) do
+        local option_width = (#option.text + 3) * 5
+        if option_width > max_option_width then
+            max_option_width = option_width
+        end
+    end
+    local box_width = math.max(title_width, max_option_width) + box_padding * 2 + 20
+    local box_height = 20 + #menu.racing_options * 12 + box_padding * 2
+    local box_x = math.floor((w - box_width) / 2)
+    local box_y = menu_y - box_padding
+
+    -- Draw box background using pixel drawing (dark blue-ish)
+    renderer.drawRectFill(box_x, box_y, box_x + box_width, box_y + box_height, 25, 38, 77)
+
+    -- Draw border
+    local bc = Palette.colors[6] or {200, 200, 200}
+    renderer.drawRect(box_x, box_y, box_x + box_width, box_y + box_height, bc[1], bc[2], bc[3])
+
+    -- Draw title centered
+    local title_x = math.floor(box_x + (box_width - #title * 5) / 2)
+    renderer.drawText(title_x, menu_y, title, 255, 255, 255, 1, true)
+    menu_y = menu_y + 18
+
+    -- Draw options
+    for i, option in ipairs(menu.racing_options) do
+        local c
+        if option.locked then
+            c = Palette.colors[5] or {128, 128, 128}  -- Grey for locked
+        elseif i == menu.selected_racing then
+            c = Palette.colors[11] or {0, 255, 255}   -- Green for selected
+        else
+            c = Palette.colors[6] or {200, 200, 200}  -- Light grey for unselected
+        end
+
+        local prefix = (i == menu.selected_racing) and "> " or "  "
         renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
     end
 
