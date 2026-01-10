@@ -592,9 +592,10 @@ function flight_scene.draw()
             end
 
             -- Add trees as shadow casters
+            -- Tree mesh is ~2.0 units tall with foliage radius ~0.55 units
             local trees = Trees.get_all()
             for _, tree in ipairs(trees) do
-                ShadowMap.addTreeCaster(tree.x, tree.y, tree.z, 1.2, tree.height or 4)
+                ShadowMap.addTreeCaster(tree.x, tree.y, tree.z, 0.55, 2.0)
             end
 
             -- Add buildings as shadow casters
