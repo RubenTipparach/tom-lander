@@ -909,7 +909,15 @@ function renderer_gpu.flushTerrain()
     shaderTerrain:send("u_fogFar", fogFar)
     shaderTerrain:send("u_fogColor", fogColor)
 
-    -- Palette shadow uniforms removed - using simple RGB darkening for now
+    -- Palette shadow uniforms
+    shaderTerrain:send("u_usePaletteShadows", config.USE_PALETTE_SHADOWS and 1.0 or 0.0)
+    shaderTerrain:send("u_ditherPaletteShadows", config.DITHER_PALETTE_SHADOWS and 1.0 or 0.0)
+    shaderTerrain:send("u_shadowBrightnessMin", config.SHADOW_BRIGHTNESS_MIN or 0.3)
+    shaderTerrain:send("u_shadowBrightnessMax", config.SHADOW_BRIGHTNESS_MAX or 0.95)
+    shaderTerrain:send("u_shadowDitherRange", config.SHADOW_DITHER_RANGE or 0.5)
+    if paletteShadowTexture then
+        shaderTerrain:send("u_paletteShadowLookup", paletteShadowTexture)
+    end
 
     -- Send shadow map uniforms
     renderer_gpu.sendShadowMapUniforms(shaderTerrain)

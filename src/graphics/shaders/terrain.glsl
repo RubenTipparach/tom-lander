@@ -44,6 +44,14 @@ uniform mat4 u_lightViewMatrix;
 uniform mat4 u_lightProjMatrix;
 uniform float u_shadowDarkness;
 
+// Palette-based shadow uniforms
+uniform float u_usePaletteShadows;  // 1.0 = palette shadows, 0.0 = RGB darkening
+uniform float u_ditherPaletteShadows;  // 1.0 = dither, 0.0 = hard levels
+uniform float u_shadowBrightnessMin;   // Brightness for darkest shadow
+uniform float u_shadowBrightnessMax;   // Brightness for original color
+uniform float u_shadowDitherRange;     // Range of blend where dithering occurs (0-1)
+uniform Image u_paletteShadowLookup;   // 32x8 texture: palette shadows lookup (x=color, y=level)
+
 #ifdef VERTEX
 varying vec2 v_texCoord;
 varying vec4 v_color;
@@ -100,6 +108,87 @@ float getBayerValue(vec2 screenPos) {
     if (idx == 13) return 7.0/16.0;
     if (idx == 14) return 13.0/16.0;
     return 5.0/16.0;
+}
+
+// Find closest palette index for a given RGB color by searching the lookup texture
+int findPaletteIndex(vec3 rgb) {
+    int bestIndex = 0;
+    float bestDist = 1000000.0;
+
+    // Sample the first row (level 0) of the palette shadow lookup to get all 32 palette colors
+    for (int i = 0; i < 32; i++) {
+        // Sample palette color from lookup texture (row 0 = original colors)
+        vec2 uv = vec2((float(i) + 0.5) / 32.0, 0.5 / 8.0);
+        vec3 paletteColor = Texel(u_paletteShadowLookup, uv).rgb;
+
+        vec3 diff = rgb - paletteColor;
+        float dist = dot(diff, diff);
+        if (dist < bestDist) {
+            bestDist = dist;
+            bestIndex = i;
+        }
+    }
+
+    return bestIndex;
+}
+
+// Check if palette texture is loaded by sampling a known non-black color
+bool isPaletteTextureValid() {
+    // Sample palette index 7 (white - should be bright)
+    vec2 uv = vec2((7.0 + 0.5) / 32.0, 0.5 / 8.0);
+    vec3 white = Texel(u_paletteShadowLookup, uv).rgb;
+    // White should have high brightness (>0.8)
+    return (white.r + white.g + white.b) > 2.0;
+}
+
+// Apply palette-based shadow to a color
+// combinedBrightness: 0.0 = darkest, 1.0 = brightest
+vec3 applyPaletteShadow(vec3 texColor, float combinedBrightness, vec2 screenCoords) {
+    // Find closest palette color for the texture color
+    int paletteIndex = findPaletteIndex(texColor);
+
+    // Map brightness to shadow level (0-7)
+    // Level 0 = brightest (original color), Level 7 = darkest shadow
+    float normalizedBrightness = clamp(
+        (combinedBrightness - u_shadowBrightnessMin) / (u_shadowBrightnessMax - u_shadowBrightnessMin),
+        0.0, 1.0
+    );
+
+    // INVERT: High brightness = low level (bright), Low brightness = high level (dark)
+    float levelFloat = (1.0 - normalizedBrightness) * 7.0;
+    float levelFloored = floor(levelFloat);
+    int level0 = int(levelFloored);
+    int level1 = level0 + 1;
+    if (level1 > 7) level1 = 7;
+    float blend = levelFloat - levelFloored;
+
+    // Get colors for the two adjacent levels from the lookup texture
+    vec2 uv0 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level0) + 0.5) / 8.0);
+    vec2 uv1 = vec2((float(paletteIndex) + 0.5) / 32.0, (float(level1) + 0.5) / 8.0);
+
+    vec3 color0 = Texel(u_paletteShadowLookup, uv0).rgb;
+    vec3 color1 = Texel(u_paletteShadowLookup, uv1).rgb;
+
+    // Choose between dithered and hard transition
+    if (u_ditherPaletteShadows > 0.5 && u_shadowDitherRange > 0.0) {
+        // Dithered transition between levels
+        float ditherRangeMin = 0.5 - u_shadowDitherRange * 0.5;
+        float ditherRangeMax = 0.5 + u_shadowDitherRange * 0.5;
+
+        if (blend < ditherRangeMin) {
+            return color0;
+        } else if (blend > ditherRangeMax) {
+            return color1;
+        } else {
+            // Within dither range - apply dithering
+            float normalizedBlend = (blend - ditherRangeMin) / (ditherRangeMax - ditherRangeMin);
+            float ditherThreshold = getBayerValue(screenCoords);
+            return (normalizedBlend > ditherThreshold) ? color1 : color0;
+        }
+    } else {
+        // Hard level cutoff (no dithering)
+        return color0;
+    }
 }
 
 // Sample shadow from a specific cascade
@@ -255,16 +344,26 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
             }
         }
 
-        // Apply directional lighting via RGB darkening
-        texColor.rgb *= brightness;
-
-        // Apply cascaded shadow darkening
+        // Get shadow factor (0 = lit, 1 = in shadow)
+        float shadowFactor = 0.0;
         if (u_shadowMapEnabled > 0.5) {
-            float shadowFactor = getShadowFactorCascaded(v_worldPos, v_viewDist);
-            if (shadowFactor > 0.5) {
-                // In shadow - darken significantly
-                texColor.rgb *= 0.4;
-            }
+            shadowFactor = getShadowFactorCascaded(v_worldPos, v_viewDist);
+        }
+
+        // Combine directional light brightness with shadow
+        // Shadow reduces brightness further (multiply by shadow darkness factor)
+        float combinedBrightness = brightness;
+        if (shadowFactor > 0.5) {
+            combinedBrightness *= u_shadowDarkness;  // Darken in shadow
+        }
+
+        // Apply lighting using palette shadows or RGB darkening
+        if (u_usePaletteShadows > 0.5 && isPaletteTextureValid()) {
+            // Palette-based shadow with dithering
+            texColor.rgb = applyPaletteShadow(texColor.rgb, combinedBrightness, screen_coords);
+        } else {
+            // Fallback: RGB darkening
+            texColor.rgb *= combinedBrightness;
         }
 
         texColor.a = 1.0;  // Terrain is always fully opaque

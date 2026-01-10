@@ -335,7 +335,15 @@ function flight_scene.update(dt)
         if Collision.box_overlap(ship.x, ship.z, ship_half_width, ship_half_depth,
                                   building.x, building.z, half_width, half_depth) then
             -- Ship is horizontally inside building bounds
-            if ship_bottom < building_top and ship_top > building_bottom then
+            -- Check if ship center is above building top (landing from above)
+            -- Use small tolerance to prevent edge-case side collisions when landing
+            local roof_tolerance = 0.1
+            if ship.y > building_top - roof_tolerance then
+                -- Ship is above building - rooftop is a landing surface
+                if building_top > ground_height then
+                    ground_height = building_top
+                end
+            elseif ship_bottom < building_top and ship_top > building_bottom then
                 -- Side collision: ship is inside building volume - push out
                 ship.x, ship.z = Collision.push_out_of_box(
                     ship.x, ship.z,
@@ -352,11 +360,6 @@ function flight_scene.update(dt)
                 -- Kill velocity when hitting side
                 ship.vx = ship.vx * 0.5
                 ship.vz = ship.vz * 0.5
-            elseif ship_bottom >= building_top then
-                -- Above building - rooftop is a landing surface
-                if building_top > ground_height then
-                    ground_height = building_top
-                end
             end
         end
     end
