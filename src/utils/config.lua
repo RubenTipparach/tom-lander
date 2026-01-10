@@ -181,11 +181,18 @@ config.WIND_ARROW_COLOR_G = 140              -- Base green color
 config.WIND_ARROW_COLOR_B = 255              -- Base blue color
 
 -- ===========================================
--- SHADOW SETTINGS (Projected ground shadows)
+-- SHADOW MAP SETTINGS
 -- ===========================================
 config.SHADOWS_ENABLED = true                -- Master toggle for shadows
-config.SHADOW_DARKNESS = 0.5                 -- Shadow darkness (0 = black, 1 = no change). Uses multiply blend.
-config.SHADOW_OFFSET_Y = 0.03                -- Height offset above terrain (prevent z-fighting)
-config.SHADOW_RENDER_DISTANCE = 30           -- Max distance to render shadows
+config.SHADOW_DARKNESS = 0.4                 -- Shadow darkness (0 = black, 1 = no change)
+config.SHADOW_MAP_SIZE = 1024                -- Shadow map resolution (1024 or 2048)
+config.SHADOW_DEPTH_RANGE = 500              -- Depth range for shadow map (how far light can reach)
+config.SHADOW_BIAS = 0.0002                   -- Depth bias (smaller = shadows work closer to ground, but may cause acne)
+
+-- Cascade settings (2 cascades: near = high detail, far = wide coverage)
+config.SHADOW_CASCADE_ENABLED = true         -- Enable cascaded shadow maps
+config.SHADOW_CASCADE_SPLIT = 15             -- Distance where near cascade ends and far begins
+config.SHADOW_NEAR_COVERAGE = 20             -- Near cascade coverage (smaller = higher quality close shadows)
+config.SHADOW_FAR_COVERAGE = 120             -- Far cascade coverage (larger = shadows visible further)
 
 return config

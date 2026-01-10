@@ -36,12 +36,23 @@ local terrainBatch = {vertices = {}, count = 0}
 -- Shadow batch (projected ground shadows) - DEPRECATED, kept for compatibility
 local shadowBatch = {vertices = {}, count = 0}
 
--- Shadow map state (new shadow system)
+-- Cascaded Shadow map state (new shadow system with 2 cascades)
+-- Near cascade (high detail, close range)
+local shadowMapTextureNear = nil
+local shadowMapLightViewMatrixNear = nil
+local shadowMapLightProjMatrixNear = nil
+-- Far cascade (lower detail, wide range)
+local shadowMapTextureFar = nil
+local shadowMapLightViewMatrixFar = nil
+local shadowMapLightProjMatrixFar = nil
+-- Cascade settings
+local shadowCascadeSplit = 25  -- Distance where we switch from near to far cascade
+local shadowMapEnabled = false
+local shadowDebugEnabled = false  -- F4 toggle for debug visualization
+-- Legacy single-texture references (kept for compatibility)
 local shadowMapTexture = nil
 local shadowMapLightViewMatrix = nil
 local shadowMapLightProjMatrix = nil
-local shadowMapEnabled = false
-local shadowDebugEnabled = false  -- F4 toggle for debug visualization
 
 -- Current state (separate matrices like g3d)
 local currentProjectionMatrix = nil
@@ -1003,16 +1014,43 @@ function renderer_gpu.flushShadows()
     shadowBatch.count = 0
 end
 
--- Set shadow map data from ShadowMap module
+-- Set cascaded shadow map data from ShadowMap module
+function renderer_gpu.setShadowMapCascaded(nearTexture, nearViewMatrix, nearProjMatrix,
+                                           farTexture, farViewMatrix, farProjMatrix, cascadeSplit)
+    shadowMapTextureNear = nearTexture
+    shadowMapLightViewMatrixNear = nearViewMatrix
+    shadowMapLightProjMatrixNear = nearProjMatrix
+    shadowMapTextureFar = farTexture
+    shadowMapLightViewMatrixFar = farViewMatrix
+    shadowMapLightProjMatrixFar = farProjMatrix
+    shadowCascadeSplit = cascadeSplit or 25
+    shadowMapEnabled = (nearTexture ~= nil and farTexture ~= nil)
+    -- Legacy compatibility
+    shadowMapTexture = farTexture
+    shadowMapLightViewMatrix = farViewMatrix
+    shadowMapLightProjMatrix = farProjMatrix
+end
+
+-- Legacy single shadow map setter (for compatibility)
 function renderer_gpu.setShadowMap(texture, lightViewMatrix, lightProjMatrix)
     shadowMapTexture = texture
     shadowMapLightViewMatrix = lightViewMatrix
     shadowMapLightProjMatrix = lightProjMatrix
+    -- Also set as far cascade for cascaded system
+    shadowMapTextureFar = texture
+    shadowMapLightViewMatrixFar = lightViewMatrix
+    shadowMapLightProjMatrixFar = lightProjMatrix
     shadowMapEnabled = (texture ~= nil)
 end
 
 -- Clear shadow map (disable shadows)
 function renderer_gpu.clearShadowMap()
+    shadowMapTextureNear = nil
+    shadowMapLightViewMatrixNear = nil
+    shadowMapLightProjMatrixNear = nil
+    shadowMapTextureFar = nil
+    shadowMapLightViewMatrixFar = nil
+    shadowMapLightProjMatrixFar = nil
     shadowMapTexture = nil
     shadowMapLightViewMatrix = nil
     shadowMapLightProjMatrix = nil
@@ -1033,7 +1071,7 @@ end
 -- Debug flag for shadow map
 local shadowMapDebugPrinted = false
 
--- Send shadow map uniforms to a shader
+-- Send cascaded shadow map uniforms to a shader
 function renderer_gpu.sendShadowMapUniforms(shader)
     if not shader then return end
 
@@ -1046,23 +1084,63 @@ function renderer_gpu.sendShadowMapUniforms(shader)
         shader:send("u_shadowDebug", shadowDebugEnabled and 1.0 or 0.0)
     end)
 
-    if shadowMapEnabled and shadowMapTexture then
+    -- Send cascade split distance
+    pcall(function()
+        shader:send("u_cascadeSplit", shadowCascadeSplit)
+    end)
+
+    if shadowMapEnabled then
         if not shadowMapDebugPrinted then
-            print("Renderer: Sending shadow map uniforms")
-            print("  Shadow map size: " .. shadowMapTexture:getWidth() .. "x" .. shadowMapTexture:getHeight())
-            print("  Shadow darkness: " .. (config.SHADOW_DARKNESS or 0.5))
+            print("Renderer: Sending cascaded shadow map uniforms")
+            if shadowMapTextureNear then
+                print("  Near cascade: " .. shadowMapTextureNear:getWidth() .. "x" .. shadowMapTextureNear:getHeight())
+            end
+            if shadowMapTextureFar then
+                print("  Far cascade: " .. shadowMapTextureFar:getWidth() .. "x" .. shadowMapTextureFar:getHeight())
+            end
+            print("  Cascade split: " .. shadowCascadeSplit .. " units")
             shadowMapDebugPrinted = true
         end
 
-        pcall(function()
-            shader:send("u_shadowMap", shadowMapTexture)
-        end)
-        pcall(function()
-            shader:send("u_lightViewMatrix", shadowMapLightViewMatrix)
-        end)
-        pcall(function()
-            shader:send("u_lightProjMatrix", shadowMapLightProjMatrix)
-        end)
+        -- Near cascade uniforms
+        if shadowMapTextureNear then
+            pcall(function()
+                shader:send("u_shadowMapNear", shadowMapTextureNear)
+            end)
+            pcall(function()
+                shader:send("u_lightViewMatrixNear", shadowMapLightViewMatrixNear)
+            end)
+            pcall(function()
+                shader:send("u_lightProjMatrixNear", shadowMapLightProjMatrixNear)
+            end)
+        end
+
+        -- Far cascade uniforms
+        if shadowMapTextureFar then
+            pcall(function()
+                shader:send("u_shadowMapFar", shadowMapTextureFar)
+            end)
+            pcall(function()
+                shader:send("u_lightViewMatrixFar", shadowMapLightViewMatrixFar)
+            end)
+            pcall(function()
+                shader:send("u_lightProjMatrixFar", shadowMapLightProjMatrixFar)
+            end)
+        end
+
+        -- Legacy uniforms (for compatibility with non-cascaded shaders)
+        if shadowMapTexture then
+            pcall(function()
+                shader:send("u_shadowMap", shadowMapTexture)
+            end)
+            pcall(function()
+                shader:send("u_lightViewMatrix", shadowMapLightViewMatrix)
+            end)
+            pcall(function()
+                shader:send("u_lightProjMatrix", shadowMapLightProjMatrix)
+            end)
+        end
+
         pcall(function()
             shader:send("u_shadowDarkness", config.SHADOW_DARKNESS or 0.5)
         end)

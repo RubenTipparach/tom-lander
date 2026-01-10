@@ -615,11 +615,15 @@ function flight_scene.draw()
             -- Render shadow map
             ShadowMap.endPass()
 
-            -- Pass shadow map to renderer for terrain shader
-            renderer.setShadowMap(
-                ShadowMap.getTexture(),
-                ShadowMap.getLightViewMatrix(),
-                ShadowMap.getLightProjMatrix()
+            -- Pass cascaded shadow maps to renderer for terrain shader
+            renderer.setShadowMapCascaded(
+                ShadowMap.getTextureNear(),
+                ShadowMap.getLightViewMatrixNear(),
+                ShadowMap.getLightProjMatrixNear(),
+                ShadowMap.getTextureFar(),
+                ShadowMap.getLightViewMatrixFar(),
+                ShadowMap.getLightProjMatrixFar(),
+                ShadowMap.getCascadeSplitDistance()
             )
         end
 

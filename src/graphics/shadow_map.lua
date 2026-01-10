@@ -1,32 +1,47 @@
--- Shadow Map Module
--- Renders shadow casters from light's perspective to create a depth-based shadow map
--- The terrain shader samples this to determine shadowed areas
+-- Shadow Map Module with Cascaded Shadow Maps (CSM)
+-- Uses 2 cascades: near (high detail) and far (wider coverage)
+-- The terrain shader samples the appropriate cascade based on distance
 
 local config = require("config")
 local mat4 = require("graphics.mat4")
 
 local ShadowMap = {}
 
--- Shadow map configuration
-local SHADOW_MAP_SIZE = 512  -- Resolution of shadow map texture
-local SHADOW_DISTANCE = 60   -- How far shadows extend from camera
-local SHADOW_NEAR = 0.1
-local SHADOW_FAR = 100
+-- Shadow map configuration (from config.lua)
+local function getConfig()
+    return {
+        MAP_SIZE = config.SHADOW_MAP_SIZE or 1024,
+        DEPTH_RANGE = config.SHADOW_DEPTH_RANGE or 500,
+        BIAS = config.SHADOW_BIAS or 0.002,
+        CASCADE_ENABLED = config.SHADOW_CASCADE_ENABLED ~= false,
+        CASCADE_SPLIT = config.SHADOW_CASCADE_SPLIT or 25,
+        NEAR_COVERAGE = config.SHADOW_NEAR_COVERAGE or 40,
+        FAR_COVERAGE = config.SHADOW_FAR_COVERAGE or 120,
+    }
+end
+local SHADOW_NEAR = 1
 
--- Shadow map resources
-local shadowCanvas = nil
-local shadowDepthCanvas = nil
+-- Shadow map resources (2 cascades)
+local shadowCanvasNear = nil
+local shadowCanvasFar = nil
+local shadowDepthCanvasNear = nil
+local shadowDepthCanvasFar = nil
 local shadowShader = nil
 
--- Light matrices
-local lightViewMatrix = nil
-local lightProjMatrix = nil
-local lightDir = {-0.866, 0.5, 0.0}  -- Default light direction (60° from east)
+-- Light matrices (2 cascades)
+local lightViewMatrixNear = nil
+local lightProjMatrixNear = nil
+local lightViewMatrixFar = nil
+local lightProjMatrixFar = nil
+local lightDir = {-0.866, 0.5, 0.0}  -- Default light direction (matches config.LIGHT_DIRECTION)
 
 -- Shadow caster batches
 local casterVertices = {}
 local casterCount = 0
 local casterMesh = nil
+
+-- Camera position for cascade selection
+local camPosX, camPosY, camPosZ = 0, 0, 0
 
 -- Vertex format for shadow casters (just position)
 local shadowVertexFormat = {
@@ -35,13 +50,20 @@ local shadowVertexFormat = {
 
 -- Initialize shadow map system
 function ShadowMap.init()
-    -- Create shadow map canvas (stores depth from light's view)
-    shadowCanvas = love.graphics.newCanvas(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, {format = "r16f", readable = true})
-    shadowCanvas:setFilter("linear", "linear")  -- Linear filtering for soft shadow edges
-    shadowCanvas:setWrap("clamp", "clamp")
+    local cfg = getConfig()
+    local size = cfg.MAP_SIZE
 
-    -- Create depth buffer for shadow rendering
-    shadowDepthCanvas = love.graphics.newCanvas(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, {format = "depth24", readable = false})
+    -- Create shadow map canvas (single shadow map for simplicity)
+    shadowCanvasNear = love.graphics.newCanvas(size, size, {format = "r16f", readable = true})
+    shadowCanvasNear:setFilter("linear", "linear")
+    shadowCanvasNear:setWrap("clamp", "clamp")
+    shadowDepthCanvasNear = love.graphics.newCanvas(size, size, {format = "depth24", readable = false})
+
+    -- Create second canvas (for compatibility, uses same settings)
+    shadowCanvasFar = love.graphics.newCanvas(size, size, {format = "r16f", readable = true})
+    shadowCanvasFar:setFilter("linear", "linear")
+    shadowCanvasFar:setWrap("clamp", "clamp")
+    shadowDepthCanvasFar = love.graphics.newCanvas(size, size, {format = "depth24", readable = false})
 
     -- Load shadow depth shader (renders depth only)
     local shaderCode = [[
@@ -86,7 +108,8 @@ function ShadowMap.init()
     -- Create mesh for shadow casters
     casterMesh = love.graphics.newMesh(shadowVertexFormat, 30000, "triangles", "stream")
 
-    print("Shadow map initialized: " .. SHADOW_MAP_SIZE .. "x" .. SHADOW_MAP_SIZE)
+    print("Shadow Map initialized: " .. size .. "x" .. size)
+    print("  Near coverage: " .. cfg.NEAR_COVERAGE .. " units, Far coverage: " .. cfg.FAR_COVERAGE .. " units")
     return true
 end
 
@@ -100,36 +123,54 @@ function ShadowMap.setLightDirection(dx, dy, dz)
     end
 end
 
+-- Helper to create shadow map matrices for a specific coverage area
+local function createShadowMatrices(camX, camY, camZ, coverage)
+    local cfg = getConfig()
+    local halfSize = coverage
+    local depthRange = cfg.DEPTH_RANGE
+
+    local projMatrix = mat4.orthographic(-halfSize, halfSize, -halfSize, halfSize, SHADOW_NEAR, depthRange)
+
+    -- Position light far enough to cover the depth range
+    local lightDist = depthRange * 0.5
+
+    -- Position light in direction of lightDir from camera position
+    local lightPosX = camX + lightDir[1] * lightDist
+    local lightPosY = camY + lightDir[2] * lightDist
+    local lightPosZ = camZ + lightDir[3] * lightDist
+
+    -- Look-at matrix: from light position, looking at camera
+    local viewMatrix = mat4.lookAt(
+        lightPosX, lightPosY, lightPosZ,
+        camX, camY, camZ,
+        0, 1, 0  -- Up vector
+    )
+
+    return viewMatrix, projMatrix
+end
+
 -- Begin shadow map rendering pass
 -- Call before adding shadow casters
 function ShadowMap.beginPass(camX, camY, camZ)
-    if not shadowCanvas or not shadowShader then return false end
+    if not shadowCanvasNear or not shadowShader then return false end
 
     casterCount = 0
+    camPosX, camPosY, camPosZ = camX, camY, camZ
 
-    -- Create orthographic projection for directional light
-    -- Center the shadow frustum around the camera
-    local halfSize = SHADOW_DISTANCE * 0.5
-    lightProjMatrix = mat4.orthographic(-halfSize, halfSize, -halfSize, halfSize, SHADOW_NEAR, SHADOW_FAR)
+    local cfg = getConfig()
 
-    -- Create view matrix looking along light direction
-    -- Position light "behind" the scene (opposite of light direction)
-    local lightDist = SHADOW_DISTANCE * 0.5
-    local lightPosX = camX - lightDir[1] * lightDist
-    local lightPosY = camY - lightDir[2] * lightDist
-    local lightPosZ = camZ - lightDir[3] * lightDist
-
-    -- Target is in front of light (along light direction)
-    local targetX = camX + lightDir[1] * lightDist
-    local targetY = camY + lightDir[2] * lightDist
-    local targetZ = camZ + lightDir[3] * lightDist
-
-    -- Look-at matrix: from light position, looking at target
-    lightViewMatrix = mat4.lookAt(
-        lightPosX, lightPosY, lightPosZ,
-        targetX, targetY, targetZ,
-        0, 1, 0  -- Up vector
-    )
+    if cfg.CASCADE_ENABLED then
+        -- Create separate matrices for near (high detail) and far (wide coverage) cascades
+        lightViewMatrixNear, lightProjMatrixNear = createShadowMatrices(camX, camY, camZ, cfg.NEAR_COVERAGE)
+        lightViewMatrixFar, lightProjMatrixFar = createShadowMatrices(camX, camY, camZ, cfg.FAR_COVERAGE)
+    else
+        -- Single shadow map mode - use far coverage for everything
+        local viewMatrix, projMatrix = createShadowMatrices(camX, camY, camZ, cfg.FAR_COVERAGE)
+        lightViewMatrixNear = viewMatrix
+        lightProjMatrixNear = projMatrix
+        lightViewMatrixFar = viewMatrix
+        lightProjMatrixFar = projMatrix
+    end
 
     return true
 end
@@ -250,7 +291,24 @@ end
 -- Debug flag
 local debugPrinted = false
 
--- End shadow map pass and render to shadow texture
+-- Render to a single cascade
+local function renderCascade(canvas, depthCanvas, viewMatrix, projMatrix)
+    -- Set shadow map as render target
+    love.graphics.setCanvas({canvas, depthstencil = depthCanvas})
+    love.graphics.clear(1, 0, 0, 1)  -- Clear to max depth (1.0)
+    love.graphics.setDepthMode("lequal", true)
+
+    -- Set shadow shader with this cascade's matrices
+    love.graphics.setShader(shadowShader)
+    shadowShader:send("lightViewMatrix", viewMatrix)
+    shadowShader:send("lightProjMatrix", projMatrix)
+    shadowShader:send("modelMatrix", {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1})  -- Identity
+
+    -- Draw mesh
+    love.graphics.draw(casterMesh)
+end
+
+-- End shadow map pass and render to both cascade textures
 function ShadowMap.endPass()
     if casterCount == 0 then
         if not debugPrinted then
@@ -259,10 +317,10 @@ function ShadowMap.endPass()
         end
         return
     end
-    if not shadowCanvas or not shadowShader then return end
+    if not shadowCanvasNear or not shadowShader then return end
 
     if not debugPrinted then
-        print("ShadowMap: Rendering " .. casterCount .. " triangles")
+        print("ShadowMap: Rendering " .. casterCount .. " triangles to 2 cascades")
         print("  Light dir: " .. lightDir[1] .. ", " .. lightDir[2] .. ", " .. lightDir[3])
         debugPrinted = true
     end
@@ -272,22 +330,16 @@ function ShadowMap.endPass()
     local prevShader = love.graphics.getShader()
     local prevDepthMode = love.graphics.getDepthMode()
 
-    -- Set shadow map as render target
-    love.graphics.setCanvas({shadowCanvas, depthstencil = shadowDepthCanvas})
-    love.graphics.clear(1, 0, 0, 1)  -- Clear to max depth (1.0)
-    love.graphics.setDepthMode("lequal", true)
-
-    -- Set shadow shader
-    love.graphics.setShader(shadowShader)
-    shadowShader:send("lightViewMatrix", lightViewMatrix)
-    shadowShader:send("lightProjMatrix", lightProjMatrix)
-    shadowShader:send("modelMatrix", {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1})  -- Identity
-
-    -- Update and draw mesh
+    -- Update mesh vertices once
     local vertCount = casterCount * 3
     casterMesh:setVertices(casterVertices, 1, vertCount)
     casterMesh:setDrawRange(1, vertCount)
-    love.graphics.draw(casterMesh)
+
+    -- Render to near cascade (high detail)
+    renderCascade(shadowCanvasNear, shadowDepthCanvasNear, lightViewMatrixNear, lightProjMatrixNear)
+
+    -- Render to far cascade (wide coverage)
+    renderCascade(shadowCanvasFar, shadowDepthCanvasFar, lightViewMatrixFar, lightProjMatrixFar)
 
     -- Restore state
     love.graphics.setShader(prevShader)
@@ -297,18 +349,51 @@ function ShadowMap.endPass()
     end
 end
 
--- Get shadow map texture for terrain shader
-function ShadowMap.getTexture()
-    return shadowCanvas
+-- Get shadow map textures for terrain shader
+function ShadowMap.getTextureNear()
+    return shadowCanvasNear
 end
 
--- Get light matrices for terrain shader
+function ShadowMap.getTextureFar()
+    return shadowCanvasFar
+end
+
+-- Legacy single texture getter (returns far cascade for compatibility)
+function ShadowMap.getTexture()
+    return shadowCanvasFar
+end
+
+-- Get light matrices for terrain shader (near cascade)
+function ShadowMap.getLightViewMatrixNear()
+    return lightViewMatrixNear
+end
+
+function ShadowMap.getLightProjMatrixNear()
+    return lightProjMatrixNear
+end
+
+-- Get light matrices for terrain shader (far cascade)
+function ShadowMap.getLightViewMatrixFar()
+    return lightViewMatrixFar
+end
+
+function ShadowMap.getLightProjMatrixFar()
+    return lightProjMatrixFar
+end
+
+-- Legacy single matrix getters (return far cascade for compatibility)
 function ShadowMap.getLightViewMatrix()
-    return lightViewMatrix
+    return lightViewMatrixFar
 end
 
 function ShadowMap.getLightProjMatrix()
-    return lightProjMatrix
+    return lightProjMatrixFar
+end
+
+-- Get cascade split distance (for shader)
+function ShadowMap.getCascadeSplitDistance()
+    local cfg = getConfig()
+    return cfg.CASCADE_SPLIT
 end
 
 -- Get light direction

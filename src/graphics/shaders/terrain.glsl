@@ -24,13 +24,25 @@ uniform float u_fogNear;
 uniform float u_fogFar;
 uniform vec3 u_fogColor;
 
-// Shadow map uniforms
+// Cascaded Shadow map uniforms
 uniform float u_shadowMapEnabled;
+// Near cascade (high detail, close range)
+uniform Image u_shadowMapNear;
+uniform mat4 u_lightViewMatrixNear;
+uniform mat4 u_lightProjMatrixNear;
+// Far cascade (lower detail, wide range)
+uniform Image u_shadowMapFar;
+uniform mat4 u_lightViewMatrixFar;
+uniform mat4 u_lightProjMatrixFar;
+// Cascade split distance
+uniform float u_cascadeSplit;  // Distance where we switch from near to far cascade
+uniform float u_shadowDebug;   // 1.0 = show debug colors (red=shadow, green=lit, yellow=near cascade)
+
+// Legacy uniforms (kept for compatibility, map to far cascade)
 uniform Image u_shadowMap;
 uniform mat4 u_lightViewMatrix;
 uniform mat4 u_lightProjMatrix;
-uniform float u_shadowDarkness;  // How much to darken shadowed areas (0-1, 0=black)
-uniform float u_shadowDebug;     // 1.0 = show debug colors (red=shadow, green=lit)
+uniform float u_shadowDarkness;
 
 #ifdef VERTEX
 varying vec2 v_texCoord;
@@ -90,20 +102,17 @@ float getBayerValue(vec2 screenPos) {
     return 5.0/16.0;
 }
 
-// Sample shadow map to determine if pixel is in shadow
+// Sample shadow from a specific cascade
 // Returns 1.0 if in shadow, 0.0 if lit
-float getShadowFactor(vec4 worldPos) {
-    if (u_shadowMapEnabled < 0.5) return 0.0;
-
+float sampleShadowCascade(vec4 worldPos, mat4 viewMat, mat4 projMat, Image shadowTex) {
     // Transform world position to light clip space
-    vec4 lightViewPos = u_lightViewMatrix * worldPos;
-    vec4 lightClipPos = u_lightProjMatrix * lightViewPos;
+    vec4 lightViewPos = viewMat * worldPos;
+    vec4 lightClipPos = projMat * lightViewPos;
 
     // Perspective divide
     vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
 
     // Convert from NDC (-1 to 1) to texture coordinates (0 to 1)
-    // No Y flip needed - shadow map shader doesn't flip either
     vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
 
     // Check if outside shadow map bounds
@@ -112,13 +121,13 @@ float getShadowFactor(vec4 worldPos) {
     }
 
     // Sample shadow map depth
-    float shadowMapDepth = Texel(u_shadowMap, shadowUV).r;
+    float shadowMapDepth = Texel(shadowTex, shadowUV).r;
 
     // Calculate current fragment's depth (same formula as shadow shader)
     float currentDepth = lightNDC.z * 0.5 + 0.5;
 
-    // Shadow bias to prevent shadow acne
-    float bias = 0.005;
+    // Shadow bias to prevent shadow acne (smaller = shadows work closer to ground)
+    float bias = 0.001;
 
     // If current depth > shadow map depth + bias, we're in shadow
     if (currentDepth > shadowMapDepth + bias) {
@@ -126,6 +135,18 @@ float getShadowFactor(vec4 worldPos) {
     }
 
     return 0.0;  // Lit
+}
+
+// Sample cascaded shadow maps - near cascade for close, far cascade for distant
+float getShadowFactorCascaded(vec4 worldPos, float viewDist) {
+    if (u_shadowMapEnabled < 0.5) return 0.0;
+
+    // Use near cascade for close objects (higher detail)
+    if (viewDist < u_cascadeSplit) {
+        return sampleShadowCascade(worldPos, u_lightViewMatrixNear, u_lightProjMatrixNear, u_shadowMapNear);
+    }
+    // Use far cascade for distant objects (wider coverage)
+    return sampleShadowCascade(worldPos, u_lightViewMatrixFar, u_lightProjMatrixFar, u_shadowMapFar);
 }
 
 vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
@@ -181,70 +202,73 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
         }
     }
 
-    // Apply shadow map first (before lighting block so shadowFactor is accessible)
-    float shadowFactor = getShadowFactor(v_worldPos);
-
-    // Apply lighting - ALWAYS use palette path to prevent uniform optimization
+    // Apply lighting
     {
         float brightness = v_color.r;  // Brightness stored in RGB channels
 
-        // Note: isUnlit check removed - terrain should always receive shadows
-        // (brightness 1.0 is normal for upward-facing terrain)
-
-        // DEBUG: Visualize shadow map - press F4 to toggle
+        // DEBUG: Visualize cascaded shadow maps - press F4 to toggle
         if (u_shadowDebug > 0.5 && u_shadowMapEnabled > 0.5) {
-            // Show shadow map depth as grayscale (white = far, black = near)
-            vec4 lightViewPos = u_lightViewMatrix * v_worldPos;
-            vec4 lightClipPos = u_lightProjMatrix * lightViewPos;
+            bool useNearCascade = (v_viewDist < u_cascadeSplit);
+
+            vec4 lightViewPos;
+            vec4 lightClipPos;
+            float shadowMapDepth;
+
+            if (useNearCascade) {
+                lightViewPos = u_lightViewMatrixNear * v_worldPos;
+                lightClipPos = u_lightProjMatrixNear * lightViewPos;
+            } else {
+                lightViewPos = u_lightViewMatrixFar * v_worldPos;
+                lightClipPos = u_lightProjMatrixFar * lightViewPos;
+            }
+
             vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
             vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
 
-            // Out of bounds = blue
             if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0) {
                 return vec4(0.0, 0.0, 1.0, 1.0);  // Blue = outside shadow map
             }
 
-            float shadowMapDepth = Texel(u_shadowMap, shadowUV).r;
+            if (useNearCascade) {
+                shadowMapDepth = Texel(u_shadowMapNear, shadowUV).r;
+            } else {
+                shadowMapDepth = Texel(u_shadowMapFar, shadowUV).r;
+            }
+
             float currentDepth = lightNDC.z * 0.5 + 0.5;
 
-            // Red = in shadow, Green = lit, brightness = depth
-            if (currentDepth > shadowMapDepth + 0.005) {
-                return vec4(shadowMapDepth, 0.0, 0.0, 1.0);  // Red = shadow (brightness shows depth)
+            // Distinct colors: Near=orange/yellow, Far=red/green
+            if (currentDepth > shadowMapDepth + 0.001) {
+                // SHADOW
+                if (useNearCascade) {
+                    return vec4(1.0, 0.5, 0.0, 1.0);  // Orange = near cascade shadow
+                } else {
+                    return vec4(1.0, 0.0, 0.0, 1.0);  // Red = far cascade shadow
+                }
             } else {
-                return vec4(0.0, shadowMapDepth, 0.0, 1.0);  // Green = lit (brightness shows depth)
+                // LIT
+                if (useNearCascade) {
+                    return vec4(1.0, 1.0, 0.0, 1.0);  // Yellow = near cascade lit
+                } else {
+                    return vec4(0.0, 1.0, 0.0, 1.0);  // Green = far cascade lit
+                }
             }
         }
 
         // Apply directional lighting via RGB darkening
         texColor.rgb *= brightness;
 
-        // Apply shadow darkening directly (same calculation as debug mode)
+        // Apply cascaded shadow darkening
         if (u_shadowMapEnabled > 0.5) {
-            vec4 lightViewPos = u_lightViewMatrix * v_worldPos;
-            vec4 lightClipPos = u_lightProjMatrix * lightViewPos;
-            vec3 lightNDC = lightClipPos.xyz / lightClipPos.w;
-            vec2 shadowUV = lightNDC.xy * 0.5 + 0.5;
-
-            if (shadowUV.x >= 0.0 && shadowUV.x <= 1.0 && shadowUV.y >= 0.0 && shadowUV.y <= 1.0) {
-                float shadowMapDepth = Texel(u_shadowMap, shadowUV).r;
-                float currentDepth = lightNDC.z * 0.5 + 0.5;
-
-                if (currentDepth > shadowMapDepth + 0.005) {
-                    // In shadow - darken significantly
-                    texColor.rgb *= 0.4;
-                }
+            float shadowFactor = getShadowFactorCascaded(v_worldPos, v_viewDist);
+            if (shadowFactor > 0.5) {
+                // In shadow - darken significantly
+                texColor.rgb *= 0.4;
             }
         }
 
-        // NOTE: Terrain doesn't use alpha for transparency
-        // v_color.a contains height data, not transparency
-        // So we don't touch texColor.a for terrain
         texColor.a = 1.0;  // Terrain is always fully opaque
     }
-
-    // NOTE: Fog is now applied at the beginning of the shader (before lighting/shadows)
-    // to ensure fog always overrides terrain colors
-    // NOTE: Terrain doesn't use alpha transparency - alpha stores height data
 
     return texColor;
 }
