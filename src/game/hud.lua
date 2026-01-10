@@ -389,11 +389,11 @@ function HUD.draw_race_hud(race_data)
         return
     end
 
-    -- Timer bar position (top center)
-    local bar_width = 150
-    local bar_height = 12
+    -- Timer bar position (top center of screen)
+    local bar_width = 180
+    local bar_height = 14
     local bar_x = (screen_w - bar_width) / 2
-    local bar_y = 60
+    local bar_y = 8
 
     -- Calculate timer progress
     local timer_percent = race_data.checkpoint_timer / race_data.checkpoint_max_time
@@ -426,40 +426,38 @@ function HUD.draw_race_hud(race_data)
 
     -- Timer text (centered on bar)
     local timer_text = string.format("%.1f", math.max(0, race_data.checkpoint_timer))
-    local text_x = bar_x + (bar_width - #timer_text * 5) / 2
-    renderer.drawText(text_x, bar_y + 2, timer_text,
+    local text_x = bar_x + (bar_width - #timer_text * 6) / 2
+    renderer.drawText(text_x, bar_y + 3, timer_text,
                       COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
 
-    -- Lap counter (above timer bar)
+    -- Lap counter (left side of timer bar)
     local lap_text = "LAP " .. race_data.current_lap .. "/" .. race_data.total_laps
-    local lap_x = (screen_w - #lap_text * 6) / 2
-    renderer.drawText(lap_x, bar_y - 12, lap_text,
+    renderer.drawText(bar_x - #lap_text * 6 - 8, bar_y + 3, lap_text,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
 
-    -- Total time (below timer bar)
+    -- Total time (right side of timer bar)
     local total_minutes = math.floor(race_data.total_time / 60)
     local total_seconds = race_data.total_time % 60
     local time_text = string.format("%d:%05.2f", total_minutes, total_seconds)
-    local time_x = (screen_w - #time_text * 5) / 2
-    renderer.drawText(time_x, bar_y + bar_height + 4, time_text,
-                      COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+    renderer.drawText(bar_x + bar_width + 8, bar_y + 3, time_text,
+                      COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
 
-    -- Checkpoint flash effect
+    -- Checkpoint flash effect (below timer bar)
     if race_data.checkpoint_flash and race_data.checkpoint_flash > 0 then
         -- Flash "CHECKPOINT!" text
         local flash_text = "CHECKPOINT!"
         local flash_x = (screen_w - #flash_text * 6) / 2
-        renderer.drawText(flash_x, bar_y - 24, flash_text,
+        renderer.drawText(flash_x, bar_y + bar_height + 6, flash_text,
                           COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
     end
 
-    -- Failed state
+    -- Failed state (below timer bar)
     if race_data.failed then
         local fail_text = "TIME'S UP!"
         local fail_x = (screen_w - #fail_text * 6) / 2
         -- Flash the text
         if math.floor(love.timer.getTime() * 4) % 2 == 0 then
-            renderer.drawText(fail_x, bar_y - 24, fail_text,
+            renderer.drawText(fail_x, bar_y + bar_height + 6, fail_text,
                               COLOR_RED[1], COLOR_RED[2], COLOR_RED[3], 1, true)
         end
     end
@@ -578,8 +576,11 @@ function HUD.draw(ship, camera, opts)
 
     opts = opts or {}
 
-    -- Draw mission panel (top-left)
-    HUD.draw_mission_panel(opts.mission)
+    -- Draw mission panel (top-left) - skip during active race (race HUD replaces it)
+    local in_active_race = opts.race_data and not opts.race_data.complete and not opts.race_data.failed
+    if not in_active_race then
+        HUD.draw_mission_panel(opts.mission)
+    end
 
     -- Draw hull bar
     HUD.draw_hull_bar(ship)

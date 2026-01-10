@@ -267,6 +267,27 @@ function Ship:update(dt)
         self.local_vyaw = self.local_vyaw - yaw_torque * timeScale
     end
 
+    -- Apply rotation control from WASD when space is held (hover + rotate mode)
+    -- This allows rotating the ship while maintaining lift with all thrusters
+    -- Uses same torque directions as normal thruster torque, but halved
+    if love.keyboard.isDown("space") then
+        local rotation_torque = gameConfig.VTOL_TORQUE_PITCH * 0.5  -- Halved for gentler control
+        -- W/S = pitch (same as front/back thruster torque: W adds pitch, S subtracts)
+        if love.keyboard.isDown("w") or love.keyboard.isDown("i") then
+            self.local_vpitch = self.local_vpitch + rotation_torque * timeScale
+        end
+        if love.keyboard.isDown("s") or love.keyboard.isDown("k") then
+            self.local_vpitch = self.local_vpitch - rotation_torque * timeScale
+        end
+        -- A/D = roll (same as left/right thruster torque: A adds roll, D subtracts)
+        if love.keyboard.isDown("a") or love.keyboard.isDown("j") then
+            self.local_vroll = self.local_vroll + rotation_torque * timeScale
+        end
+        if love.keyboard.isDown("d") or love.keyboard.isDown("l") then
+            self.local_vroll = self.local_vroll - rotation_torque * timeScale
+        end
+    end
+
     -- Update position (scaled by dt)
     self.x = self.x + self.vx * timeScale
     self.y = self.y + self.vy * timeScale
