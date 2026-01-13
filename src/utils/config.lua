@@ -107,6 +107,33 @@ config.VTOL_COLLISION_DEPTH = 1.0    -- Half-depth (Z axis)
 config.VTOL_COLLISION_OFFSET_Y = 0.0 -- Vertical offset of collision box center
 
 -- ===========================================
+-- SHIP HEALTH & DAMAGE SETTINGS
+-- ===========================================
+config.SHIP_MAX_HEALTH = 200                  -- Ship starting/max health
+config.SHIP_COLLISION_DAMAGE_MULTIPLIER = 20  -- Damage = collision_speed * this value (was 100)
+config.SHIP_HARD_LANDING_THRESHOLD = 0.05     -- Vertical speed above this = hard landing damage
+config.SHIP_HARD_LANDING_EXPLOSION_THRESHOLD = 0.05 -- Vertical speed above this = spawn explosion
+config.SHIP_GROUND_SCRAPE_THRESHOLD = 0.08    -- Horizontal speed above this = ground scraping damage
+config.SHIP_SIDE_CRASH_MULTIPLIER = 5         -- Damage multiplier when crashing on side
+config.SHIP_TOP_CRASH_MULTIPLIER = 10         -- Damage multiplier when crashing upside down
+config.SHIP_DAMAGE_SMOKE_THRESHOLD = 50       -- Start smoke at this hull % (50 = half health)
+config.SHIP_DAMAGE_CRITICAL_THRESHOLD = 25    -- More smoke + sparks below this hull %
+config.SHIP_DAMAGE_SMOKE_RATE_NORMAL = 0.3    -- Seconds between smoke puffs at threshold
+config.SHIP_DAMAGE_SMOKE_RATE_CRITICAL = 0.05 -- Seconds between smoke at critical
+
+-- Landing pad repair settings
+config.SHIP_REPAIR_RATE = 20                  -- Health points repaired per second on landing pad
+config.SHIP_REPAIR_DELAY = 1.0                -- Seconds of being stationary before repair starts
+config.SHIP_REPAIR_VELOCITY_THRESHOLD = 0.05  -- Max velocity to be considered "stationary"
+
+-- ===========================================
+-- EXPLOSION SETTINGS
+-- ===========================================
+config.EXPLOSION_IMPACT_SCALE = 0.8           -- Scale of impact explosions
+config.EXPLOSION_DEATH_SCALE = 2.5            -- Scale of death explosion
+config.EXPLOSION_ENEMY_SCALE = 1.5            -- Scale of enemy explosions
+
+-- ===========================================
 -- THRUSTER FLAME SETTINGS
 -- ===========================================
 config.FLAME_BRIGHTNESS = 1.0        -- Flame brightness (1.0 = emissive, no shading)

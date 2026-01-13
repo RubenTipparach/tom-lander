@@ -42,10 +42,12 @@ function Ship.new(config)
     self.damping = config.damping or gameConfig.VTOL_DAMPING
     self.angular_damping = config.angular_damping or gameConfig.VTOL_ANGULAR_DAMPING
 
-    -- Health and damage
-    self.max_health = config.max_health or 100
+    -- Health and damage (use config value)
+    self.max_health = config.max_health or gameConfig.SHIP_MAX_HEALTH or 200
     self.health = self.max_health
     self.damage_blink_timer = 0  -- Timer for damage blink effect
+    self.is_exploding = false    -- True during death explosion sequence
+    self.explosion_timer = 0     -- Timer for death sequence
 
     -- Mesh data
     self.mesh = nil
@@ -174,6 +176,8 @@ function Ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
 
     self.health = self.max_health
     self.damage_blink_timer = 0
+    self.is_exploding = false
+    self.explosion_timer = 0
 end
 
 -- Update thruster states from keyboard (called from flight_scene)
@@ -502,6 +506,19 @@ end
 -- Check if ship is destroyed
 function Ship:is_destroyed()
     return self.health <= 0
+end
+
+-- Get hull percentage (0-100)
+function Ship:get_hull_percent()
+    return (self.health / self.max_health) * 100
+end
+
+-- Start the death explosion sequence
+function Ship:start_exploding()
+    if not self.is_exploding then
+        self.is_exploding = true
+        self.explosion_timer = 0
+    end
 end
 
 -- Get rotation matrix from quaternion (for external use)

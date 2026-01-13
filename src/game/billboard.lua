@@ -16,11 +16,19 @@ function Billboard.reset()
 end
 
 -- Spawn a new billboard at position
-function Billboard.spawn(x, y, z, size, lifetime, sprite_id)
+-- Optional params table can include:
+--   scale_phase1: scale multiplier at end of phase 1 (default 1.5)
+--   scale_phase2: scale multiplier at end of phase 2/death (default 2.0)
+--   phase1_ratio: portion of lifetime for phase 1 (default 0.4)
+--   fade_in_end: when fade-in completes (0-1, default 0.1 = fade in during first 10%)
+--   fade_out_start: when to start fading out (0-1, default 0.6 = start fading at 60% through)
+function Billboard.spawn(x, y, z, size, lifetime, sprite_id, params)
     if #billboards >= max_billboards then
         -- Remove oldest billboard
         table.remove(billboards, 1)
     end
+
+    params = params or {}
 
     local billboard = {
         x = x,
@@ -33,7 +41,14 @@ function Billboard.spawn(x, y, z, size, lifetime, sprite_id)
         vx = 0,
         vy = 0.5,  -- Slow upward drift
         vz = 0,
-        scale_growth = 0.5,  -- Grow over lifetime
+        -- Two-phase animation params
+        scale_phase1 = params.scale_phase1 or 1.5,   -- Scale at end of phase 1
+        scale_phase2 = params.scale_phase2 or 2.0,   -- Scale at death
+        phase1_ratio = params.phase1_ratio or 0.4,   -- 40% of life is phase 1
+        fade_in_end = params.fade_in_end or 0.15,    -- Fade in during first 15%
+        fade_out_start = params.fade_out_start or params.fade_start or 0.6,  -- Start fading out at 60%
+        -- Legacy support
+        scale_growth = params.scale_growth,          -- If set, use old linear scaling
     }
 
     table.insert(billboards, billboard)
@@ -109,10 +124,42 @@ function Billboard.draw(renderer, viewMatrix, cam)
     -- Draw each billboard
     for _, b in ipairs(billboards) do
         local life_ratio = b.lifetime / b.max_lifetime
-        local fade = life_ratio  -- Fade out as it dies
+        local progress = 1.0 - life_ratio  -- 0 at birth, 1 at death
 
-        -- Scale grows over lifetime
-        local scale = b.size * (1.0 + (1.0 - life_ratio) * b.scale_growth)
+        -- Calculate scale using two-phase animation
+        local scale
+        if b.scale_growth then
+            -- Legacy mode: linear scale growth
+            scale = b.size * (1.0 + progress * b.scale_growth)
+        else
+            -- Two-phase animation
+            local phase1_end = b.phase1_ratio
+            if progress < phase1_end then
+                -- Phase 1: rapid scale up from 1.0 to scale_phase1
+                local t = progress / phase1_end
+                scale = b.size * (1.0 + t * (b.scale_phase1 - 1.0))
+            else
+                -- Phase 2: slower scale from scale_phase1 to scale_phase2
+                local t = (progress - phase1_end) / (1.0 - phase1_end)
+                scale = b.size * (b.scale_phase1 + t * (b.scale_phase2 - b.scale_phase1))
+            end
+        end
+
+        -- Calculate fade (alpha) with fade-in and fade-out
+        local fade
+        if progress < b.fade_in_end then
+            -- Fade in: 0 -> 1 during fade_in period
+            fade = progress / b.fade_in_end
+        elseif progress < b.fade_out_start then
+            -- Full opacity between fade-in and fade-out
+            fade = 1.0
+        else
+            -- Fade out: 1 -> 0 during fade_out period
+            fade = 1.0 - (progress - b.fade_out_start) / (1.0 - b.fade_out_start)
+        end
+        -- Clamp fade to valid range
+        fade = math.max(0, math.min(1, fade))
+
         local half = scale * 0.5
 
         -- Get texture data

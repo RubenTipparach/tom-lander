@@ -3,6 +3,7 @@ local scene_manager = require("scene_manager")
 local config = require("config")
 local renderer = require("renderer")
 local profile = require("profiler")
+local AudioManager = require("audio_manager")
 
 -- Frame rate tracking
 local frameCount = 0
@@ -18,6 +19,9 @@ scene_manager.register("cutscene", require("cutscene_scene"))
 function love.load()
     -- Initialize renderer ONCE at startup (calling init twice causes JIT issues)
     renderer.init(config.RENDER_WIDTH, config.RENDER_HEIGHT)
+
+    -- Initialize audio system
+    AudioManager.init()
 
     -- Window mode is set in conf.lua
     -- Start with menu

@@ -113,17 +113,17 @@ function HUD.draw_hull_bar(ship)
 
     -- Health text
     renderer.drawText(HULL_BAR_X + 2, HULL_BAR_Y + 2,
-                      "HULL: " .. math.floor(math.max(0, health)) .. "%",
+                      "HULL: " .. math.floor(math.max(0, health_percent * 100)) .. "%",
                       COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
 end
 
--- Draw 3D compass with altitude
+-- Draw 3D compass with altitude and speed
 function HUD.draw_compass(ship, camera, mission_target)
-    -- Black box background for compass and altitude
-    local box_width = 100
-    local box_height = 22
-    local box_x1 = COMPASS_X - box_width / 2 + 20
-    local box_x2 = COMPASS_X + box_width / 2 + 20
+    -- Black box background for compass, altitude, and speed
+    local box_width = 115
+    local box_height = 30
+    local box_x1 = COMPASS_X - box_width / 2 + 27
+    local box_x2 = COMPASS_X + box_width / 2 + 27
     local box_y1 = COMPASS_Y - box_height / 2
     local box_y2 = COMPASS_Y + box_height / 2
 
@@ -196,9 +196,18 @@ function HUD.draw_compass(ship, camera, mission_target)
 
     -- Altitude counter (1 world unit = 10 meters)
     local altitude_meters = (ship.y or 0) * 10
-    renderer.drawText(COMPASS_X + 20, COMPASS_Y - 3,
+    renderer.drawText(COMPASS_X + 20, COMPASS_Y - 8,
                       "ALT: " .. math.floor(altitude_meters) .. "m",
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+
+    -- Speed counter (m/s) - calculate total velocity magnitude
+    local vx = ship.vx or 0
+    local vy = ship.vy or 0
+    local vz = ship.vz or 0
+    local speed = math.sqrt(vx*vx + vy*vy + vz*vz) * 10  -- Convert to m/s (1 unit = 10m)
+    renderer.drawText(COMPASS_X + 20, COMPASS_Y + 2,
+                      "SPD: " .. math.floor(speed) .. "m/s",
+                      COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
 end
 
 -- Draw control hints

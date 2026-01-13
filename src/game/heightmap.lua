@@ -114,6 +114,43 @@ function Heightmap.get_height(world_x, world_z)
     return height
 end
 
+-- Check if a world position is over water (all surrounding heights are 0)
+function Heightmap.is_water(world_x, world_z)
+    -- Initialize on first call if needed
+    if not heightmap_image_data then
+        Heightmap.init()
+    end
+
+    if not heightmap_image_data then
+        return true  -- No heightmap = water
+    end
+
+    -- Convert world coordinates to heightmap coordinates
+    local half_world = (Heightmap.MAP_SIZE * Heightmap.TILE_SIZE) / 2
+    local map_x_f = (world_x + half_world) / Heightmap.TILE_SIZE
+    local map_z_f = (world_z + half_world) / Heightmap.TILE_SIZE
+
+    -- Get the four surrounding heightmap pixels
+    local x0 = floor(map_x_f)
+    local z0 = floor(map_z_f)
+    local x1 = x0 + 1
+    local z1 = z0 + 1
+
+    -- Outside map bounds = water
+    if x0 < 0 or x1 >= Heightmap.MAP_SIZE or z0 < 0 or z1 >= Heightmap.MAP_SIZE then
+        return true
+    end
+
+    -- Get height indices at four corners (0 = water level)
+    local h00 = get_pixel_height_index(x0, z0)
+    local h10 = get_pixel_height_index(x1, z0)
+    local h01 = get_pixel_height_index(x0, z1)
+    local h11 = get_pixel_height_index(x1, z1)
+
+    -- Water if all four corners are at height 0
+    return h00 == 0 and h10 == 0 and h01 == 0 and h11 == 0
+end
+
 -- Generate terrain mesh around camera position
 -- Returns vertices with per-vertex height index for shader-based texture blending
 function Heightmap.generate_terrain(cam_x, cam_z, grid_count, render_distance)

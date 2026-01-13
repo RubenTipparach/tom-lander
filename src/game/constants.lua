@@ -30,6 +30,7 @@ Constants.SPRITE_BULLET_PLAYER = 25  -- Player bullet texture (16x16)
 Constants.SPRITE_BULLET_ENEMY = 26  -- Enemy bullet texture (16x16)
 Constants.SPRITE_UFO_FIGHTER = 28  -- UFO fighter alien texture (32x32)
 Constants.SPRITE_UFO_MOTHER = 27  -- Mother ship texture (128x128)
+Constants.SPRITE_EXPLOSION = 29  -- Explosion effect texture (32x32)
 Constants.SPRITE_HEIGHTMAP = 64  -- Heightmap data source (128x128)
 
 -- Landing pad names

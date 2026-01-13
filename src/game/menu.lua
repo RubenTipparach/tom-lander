@@ -11,6 +11,7 @@ local obj_loader = require("obj_loader")
 local Constants = require("constants")
 local Palette = require("palette")
 local SaveData = require("save_data")
+local AudioManager = require("audio_manager")
 
 -- Ship display settings (matching Picotron, Z inverted for Love2D)
 local SHIP_X = 0
@@ -414,6 +415,9 @@ function menu.load()
     menu.update_options()
     menu.update_campaign_options()
     menu.update_racing_options()
+
+    -- Start menu music
+    AudioManager.start_menu_music()
 
     -- Only initialize 3D rendering if enabled in config
     if config.MENU_3D_ENABLED then

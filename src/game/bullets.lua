@@ -2,6 +2,7 @@
 -- Ported from Picotron version
 
 local Constants = require("constants")
+local AudioManager = require("audio_manager")
 
 local Bullets = {}
 
@@ -52,6 +53,7 @@ function Bullets.spawn_player_bullet(x, y, z, dir_x, dir_y, dir_z, max_range)
     end
 
     Bullets.player_fire_timer = Bullets.PLAYER_FIRE_COOLDOWN
+    AudioManager.play_sfx(0)  -- Shoot sound
     return Bullets.spawn(x, y, z, dir_x, dir_y, dir_z, Constants.SPRITE_BULLET_PLAYER, "player", max_range, Bullets.PLAYER_BULLET_SPEED)
 end
 

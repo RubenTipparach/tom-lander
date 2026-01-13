@@ -6,6 +6,7 @@ local renderer = require("renderer")
 local camera_module = require("camera")
 local mat4 = require("mat4")
 local vec3 = require("vec3")
+local quat = require("quat")
 local Ship = require("ship")
 local ParticleSystem = require("particle_system")
 local SpeedLines = require("speed_lines")
@@ -30,6 +31,8 @@ local Shadow = require("graphics.shadow")
 local ShadowMap = require("graphics.shadow_map")
 local Fireworks = require("fireworks")
 local Billboard = require("billboard")
+local Explosion = require("explosion")
+local AudioManager = require("audio_manager")
 
 local flight_scene = {}
 
@@ -70,6 +73,16 @@ local wave_start_delay = 0  -- Delay before starting next wave
 local race_victory_mode = false
 local race_victory_cam_angle = 0  -- Camera orbit angle around ship
 local race_victory_ship_pos = {x = 0, y = 0, z = 0}  -- Frozen ship position
+
+-- Ship death state
+local ship_death_mode = false
+local ship_death_timer = 0
+local ship_death_explosion_count = 0
+local ship_death_pos = {x = 0, y = 0, z = 0}
+
+-- Ship repair state
+local repair_timer = 0
+local is_repairing = false
 
 -- Fonts
 local thrusterFont = nil
@@ -170,6 +183,11 @@ function flight_scene.load()
         spawn_yaw = spawn_yaw or 0
     })
 
+    -- Register ship for damage smoke effects
+    Explosion.register_damage_smoke("player_ship", function()
+        return ship.x, ship.y, ship.z
+    end)
+
     -- Create buildings (matching Picotron exactly)
     building_configs = {
         {x = -10, z = 5, width = 1.5, depth = 1.5, height = 8, side_sprite = Constants.SPRITE_BUILDING_SIDE},      -- Tall tower
@@ -212,8 +230,15 @@ function flight_scene.load()
     -- Start mission or race if selected
     if current_mission_num then
         Missions.start(current_mission_num, Mission)
+        -- Start mission-specific music
+        AudioManager.start_level_music(current_mission_num)
     elseif current_track_num then
         Missions.start_race_track(current_track_num, Mission)
+        -- Racing mode uses mission 7 music mapping
+        AudioManager.start_level_music(7)
+    else
+        -- Free flight - use menu music at lower volume
+        AudioManager.start_level_music(nil)
     end
 
     -- Initialize combat systems for Mission 6
@@ -229,12 +254,13 @@ function flight_scene.load()
             Bullets.spawn_enemy_bullet(x, y, z, dx, dy, dz, range)
         end
         Aliens.on_fighter_destroyed = function(x, y, z)
-            print("Fighter destroyed at " .. x .. ", " .. y .. ", " .. z)
-            -- TODO: Spawn explosion particles
+            Explosion.spawn_enemy(x, y, z, config.EXPLOSION_ENEMY_SCALE or 1.5)
+            AudioManager.play_sfx(3)  -- Explosion sound
         end
         Aliens.on_mothership_destroyed = function(x, y, z)
-            print("MOTHER SHIP DESTROYED!")
-            -- TODO: Spawn big explosion
+            -- Big explosion for mothership (larger scale)
+            Explosion.spawn_death(x, y, z, (config.EXPLOSION_DEATH_SCALE or 2.5) * 2.0)
+            AudioManager.play_sfx(3)  -- Explosion sound
         end
 
         -- Start first wave with delay
@@ -362,8 +388,71 @@ function flight_scene.update(dt)
         return
     end
 
-    -- Update ship physics
+    -- Check for ship death FIRST (before physics update)
+    if ship:is_destroyed() and not ship_death_mode then
+        ship_death_mode = true
+        ship_death_timer = 0
+        ship_death_explosion_count = 0
+        ship_death_pos = {x = ship.x, y = ship.y, z = ship.z}
+
+        -- Freeze the ship in place
+        ship.vx = 0
+        ship.vy = 0
+        ship.vz = 0
+        ship.local_vpitch = 0
+        ship.local_vyaw = 0
+        ship.local_vroll = 0
+
+        -- Spawn the big death explosion
+        Explosion.spawn_death(ship.x, ship.y, ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
+        AudioManager.play_sfx(3)  -- Explosion sound
+        AudioManager.stop_thruster()  -- Stop thruster sound
+    end
+
+    -- Handle death sequence - skip normal physics
+    if ship_death_mode then
+        ship_death_timer = ship_death_timer + dt
+
+        -- Keep ship completely frozen
+        ship.vx = 0
+        ship.vy = 0
+        ship.vz = 0
+        ship.local_vpitch = 0
+        ship.local_vyaw = 0
+        ship.local_vroll = 0
+
+        -- Spawn additional explosions during death sequence
+        if ship_death_timer < 2.0 and math.random() < dt * 3 then
+            local offset_x = (math.random() - 0.5) * 3
+            local offset_y = (math.random() - 0.5) * 2
+            local offset_z = (math.random() - 0.5) * 3
+            Explosion.spawn_impact(
+                ship.x + offset_x,
+                ship.y + offset_y,
+                ship.z + offset_z,
+                0.5 + math.random() * 0.5
+            )
+        end
+
+        -- Update billboards and particles even during death
+        Billboard.update(dt)
+        smoke_system:update(dt)
+
+        -- Update damage smoke (shows ship is destroyed)
+        Explosion.update_damage_smoke("player_ship", 0, dt)
+
+        -- After death sequence, show death screen (handled in draw)
+        -- Player can press R to restart or Q to quit
+        profile("update")
+        return
+    end
+
+    -- Update ship physics (only when alive)
     ship:update(dt)
+
+    -- Update damage smoke based on hull percentage
+    local hull_percent = ship:get_hull_percent()
+    Explosion.update_damage_smoke("player_ship", hull_percent, dt)
 
     -- Ground damping constants
     local GROUND_VELOCITY_DAMPING = 0.9  -- Extra damping when grounded
@@ -433,10 +522,14 @@ function flight_scene.update(dt)
                     half_width, half_depth
                 )
 
-                -- Damage based on collision speed
+                -- Damage based on collision speed (configurable multiplier)
                 local collision_speed = math.sqrt(ship.vx*ship.vx + ship.vy*ship.vy + ship.vz*ship.vz)
                 if collision_speed > 0.05 then
-                    ship:take_damage(collision_speed * 100)
+                    local damage = collision_speed * (config.SHIP_COLLISION_DAMAGE_MULTIPLIER or 20)
+                    ship:take_damage(damage)
+                    -- Spawn impact explosion
+                    Explosion.spawn_impact(ship.x, ship.y, ship.z, config.EXPLOSION_IMPACT_SCALE or 0.8)
+                    AudioManager.play_sfx(8)  -- Collision sound
                 end
 
                 -- Kill velocity when hitting side
@@ -451,11 +544,72 @@ function flight_scene.update(dt)
     local landing_height = ground_height + ship_ground_offset
 
     if ship.y < landing_height then
-        local impact_speed = math.abs(ship.vy)
+        -- Check for water collision (instant death)
+        if Heightmap.is_water(ship.x, ship.z) then
+            -- Water collision = instant death explosion
+            Explosion.spawn_death(ship.x, ship.y, ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
+            AudioManager.play_sfx(3)  -- Explosion sound
+            ship.health = 0  -- Kill the ship
+        else
+            local vertical_speed = math.abs(ship.vy)
+            local horizontal_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
 
-        -- Damage on hard landing
-        if impact_speed > 0.1 then
-            ship:take_damage(impact_speed * 100)
+            -- Calculate orientation damage multiplier
+            -- Ship's local up vector (0, 1, 0) transformed to world space
+            -- If ship is upright, world_up_y will be close to 1
+            -- If ship is upside down, world_up_y will be close to -1
+            -- If ship is on its side, world_up_y will be close to 0
+            local _, world_up_y, _ = quat.rotateVector(ship.orientation, 0, 1, 0)
+
+            -- Orientation multiplier based on ship orientation
+            -- world_up_y = 1 (upright) -> 1x damage (bottom armor)
+            -- world_up_y = 0 (on side) -> side crash multiplier
+            -- world_up_y < 0 (upside down) -> top crash multiplier
+            local side_mult = config.SHIP_SIDE_CRASH_MULTIPLIER or 5
+            local top_mult = config.SHIP_TOP_CRASH_MULTIPLIER or 10
+            local orientation_multiplier = 1.0
+
+            if world_up_y < 0 then
+                -- Upside down: interpolate from side_mult at 0 to top_mult at -1
+                local t = -world_up_y  -- 0 to 1 as we go more upside down
+                orientation_multiplier = side_mult + t * (top_mult - side_mult)
+            elseif world_up_y < 0.5 then
+                -- On side: interpolate from 1x at 0.5 to side_mult at 0
+                local t = (0.5 - world_up_y) / 0.5  -- 0 at 0.5, 1 at 0
+                orientation_multiplier = 1 + t * (side_mult - 1)
+            end
+
+            -- Damage on hard landing (configurable thresholds)
+            local hard_landing_threshold = config.SHIP_HARD_LANDING_THRESHOLD or 0.05
+            local explosion_threshold = config.SHIP_HARD_LANDING_EXPLOSION_THRESHOLD or 0.1
+
+            -- Vertical impact damage
+            if vertical_speed > hard_landing_threshold then
+                -- Quadratic damage scaling: harder impacts hurt exponentially more
+                local base_damage = vertical_speed * (config.SHIP_COLLISION_DAMAGE_MULTIPLIER or 20)
+                local speed_factor = 1 + (vertical_speed * 10)
+                local damage = base_damage * speed_factor * orientation_multiplier
+                ship:take_damage(damage)
+                -- Spawn impact explosion for hard landings
+                if vertical_speed > explosion_threshold then
+                    local explosion_scale = (config.EXPLOSION_IMPACT_SCALE or 0.8) * math.min(orientation_multiplier, 3)
+                    Explosion.spawn_impact(ship.x, ship.y, ship.z, explosion_scale)
+                    AudioManager.play_sfx(8)  -- Collision sound
+                end
+            end
+
+            -- Horizontal ground scraping damage (dragging along ground)
+            local scrape_threshold = config.SHIP_GROUND_SCRAPE_THRESHOLD or 0.08
+            if horizontal_speed > scrape_threshold then
+                local scrape_damage = horizontal_speed * (config.SHIP_COLLISION_DAMAGE_MULTIPLIER or 20) * 0.5
+                local speed_factor = 1 + (horizontal_speed * 5)
+                ship:take_damage(scrape_damage * speed_factor * orientation_multiplier)
+                -- Spawn sparks/small explosion for fast scraping
+                if horizontal_speed > scrape_threshold * 2 then
+                    Explosion.spawn_impact(ship.x, ship.y, ship.z, 0.4)
+                    AudioManager.play_sfx(8)  -- Collision sound
+                end
+            end
         end
 
         -- Snap to ground and zero vertical velocity
@@ -490,9 +644,39 @@ function flight_scene.update(dt)
         print("Cargo delivered to " .. current_landing_pad.name .. "!")
     end
 
+    -- Landing pad repair system
+    is_repairing = false
+    if current_landing_pad and is_grounded then
+        -- Calculate total velocity
+        local total_velocity = math.sqrt(ship.vx*ship.vx + ship.vy*ship.vy + ship.vz*ship.vz)
+        local velocity_threshold = config.SHIP_REPAIR_VELOCITY_THRESHOLD or 0.05
+
+        if total_velocity < velocity_threshold then
+            -- Ship is stationary on landing pad
+            repair_timer = repair_timer + dt
+            local repair_delay = config.SHIP_REPAIR_DELAY or 1.0
+
+            -- Start repairing after delay
+            if repair_timer >= repair_delay and ship.health < ship.max_health then
+                is_repairing = true
+                local repair_rate = config.SHIP_REPAIR_RATE or 20
+                local repair_amount = repair_rate * dt
+                ship.health = math.min(ship.health + repair_amount, ship.max_health)
+            end
+        else
+            -- Ship is moving, reset repair timer
+            repair_timer = 0
+        end
+    else
+        -- Not on landing pad, reset repair timer
+        repair_timer = 0
+    end
+
     -- Spawn smoke particles when thrusters are active
+    local any_thruster_active = false
     for _, thruster in ipairs(ship.thrusters) do
         if thruster.active then
+            any_thruster_active = true
             smoke_system:spawn(
                 ship.x + thruster.x,
                 ship.y - 0.5,
@@ -502,6 +686,13 @@ function flight_scene.update(dt)
                 ship.vz * 0.5
             )
         end
+    end
+
+    -- Manage thruster sound
+    if any_thruster_active and not ship_death_mode then
+        AudioManager.start_thruster()
+    else
+        AudioManager.stop_thruster()
     end
 
     -- Update particles
@@ -855,9 +1046,27 @@ function flight_scene.draw()
         mission = mission_data,
         mission_target = Mission.get_target(),
         current_location = nil,  -- TODO: detect current landing pad/building
-        is_repairing = false,  -- TODO: add repair logic
+        is_repairing = is_repairing,
         race_data = Mission.get_race_data()  -- Race HUD data (nil if not in race)
     })
+
+    -- Draw death screen overlay if ship is destroyed
+    if ship_death_mode and ship_death_timer > 1.5 then
+        -- Dark overlay
+        renderer.drawRectFill(0, 0, config.RENDER_WIDTH, config.RENDER_HEIGHT, 0, 0, 0, 180)
+
+        -- "SHIP DESTROYED" text
+        local title = "SHIP DESTROYED"
+        local title_x = config.RENDER_WIDTH / 2 - #title * 4
+        local title_y = config.RENDER_HEIGHT / 2 - 30
+        renderer.drawText(title_x, title_y, title, 255, 80, 80)
+
+        -- Instructions
+        local restart_text = "[R] Restart"
+        local quit_text = "[Q] Quit to Menu"
+        renderer.drawText(config.RENDER_WIDTH / 2 - #restart_text * 4, config.RENDER_HEIGHT / 2 + 10, restart_text, 255, 255, 255)
+        renderer.drawText(config.RENDER_WIDTH / 2 - #quit_text * 4, config.RENDER_HEIGHT / 2 + 25, quit_text, 200, 200, 200)
+    end
     profile(" hud")
 
     profile("present")
@@ -912,6 +1121,22 @@ function flight_scene.keypressed(key)
     -- Let HUD handle its keypresses (tab/escape for pause)
     HUD.keypressed(key)
 
+    -- Handle Q key in death mode - quit to menu
+    if key == "q" and ship_death_mode then
+        ship_death_mode = false
+        Mission.reset()
+        Billboard.reset()
+        Fireworks.reset()
+        if combat_active then
+            Aliens.reset()
+            Bullets.reset()
+            combat_active = false
+        end
+        local scene_manager = require("scene_manager")
+        scene_manager.switch("menu")
+        return
+    end
+
     if key == "r" then
         -- Reset ship to first landing pad
         local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
@@ -920,6 +1145,13 @@ function flight_scene.keypressed(key)
         -- Reset camera rotation
         cam.pitch = 0
         cam.yaw = 0
+
+        -- Reset death state
+        ship_death_mode = false
+        ship_death_timer = 0
+        repair_timer = 0
+        is_repairing = false
+        Billboard.reset()
 
         -- Reset victory mode and fireworks
         race_victory_mode = false
@@ -930,6 +1162,8 @@ function flight_scene.keypressed(key)
             Mission.reset()
             if current_mission_num then
                 Missions.start(current_mission_num, Mission)
+                -- Restart mission music
+                AudioManager.start_level_music(current_mission_num)
 
                 -- Reset combat for Mission 6
                 if current_mission_num == 6 then
@@ -940,6 +1174,8 @@ function flight_scene.keypressed(key)
                 end
             elseif current_track_num then
                 Missions.start_race_track(current_track_num, Mission)
+                -- Restart racing music
+                AudioManager.start_level_music(7)
             end
         end
 
@@ -955,10 +1191,17 @@ function flight_scene.keypressed(key)
     end
 
     -- B key - spawn test billboard above ship (free flight only)
-    if key == "b" and not Mission.is_active() then
-        Billboard.spawn(ship.x, ship.y + 0.2, ship.z, 0.5, 3.0)
-        print("Spawned billboard at ship position")
-    end
+    -- if key == "b" and not Mission.is_active() then
+    --     Billboard.spawn(ship.x, ship.y + 0.2, ship.z, 0.5, 3.0)
+    --     print("Spawned billboard at ship position")
+    -- end
+end
+
+-- Called when leaving the flight scene
+function flight_scene.unload()
+    -- Stop all audio when leaving flight scene
+    AudioManager.stop_thruster()
+    AudioManager.stop_music()
 end
 
 return flight_scene
