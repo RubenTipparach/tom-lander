@@ -478,113 +478,65 @@ end
 function Aliens.draw_debug(renderer)
     if not config.COMBAT_DEBUG then return end
 
-    -- Debug colors (as texData-like tables with getPixel)
-    local red = {getPixel = function() return 255, 0, 0, 255 end}
-    local green = {getPixel = function() return 0, 255, 0, 255 end}
-    local blue = {getPixel = function() return 0, 100, 255, 255 end}
-    local yellow = {getPixel = function() return 255, 255, 0, 255 end}
-    local cyan = {getPixel = function() return 0, 255, 255, 255 end}
-    local magenta = {getPixel = function() return 255, 0, 255, 255 end}
-
     -- Draw debug for all fighters
     for _, fighter in ipairs(Aliens.fighters) do
-        Aliens.draw_alien_debug(renderer, fighter, 0.5, red, green, blue, yellow, cyan)
+        Aliens.draw_alien_debug(renderer, fighter, 0.5, 0, 255, 255)  -- Cyan velocity
     end
 
     -- Draw debug for mother ship
     if Aliens.mother_ship then
-        Aliens.draw_alien_debug(renderer, Aliens.mother_ship, 2.0, red, green, blue, yellow, magenta)
+        Aliens.draw_alien_debug(renderer, Aliens.mother_ship, 2.0, 255, 0, 255)  -- Magenta velocity
     end
 end
 
 -- Draw debug visuals for a single alien
-function Aliens.draw_alien_debug(renderer, alien, radius, red, green, blue, yellow, velocity_color)
+function Aliens.draw_alien_debug(renderer, alien, radius, vel_r, vel_g, vel_b)
     local x, y, z = alien.x, alien.y, alien.z
 
     -- Draw 3-axis cross at center
     local axis_length = radius * 1.5
 
     -- X axis (red)
-    Aliens.draw_debug_line(renderer, x - axis_length, y, z, x + axis_length, y, z, red)
+    Aliens.draw_debug_line(renderer, x - axis_length, y, z, x + axis_length, y, z, 255, 0, 0)
     -- Y axis (green)
-    Aliens.draw_debug_line(renderer, x, y - axis_length, z, x, y + axis_length, z, green)
+    Aliens.draw_debug_line(renderer, x, y - axis_length, z, x, y + axis_length, z, 0, 255, 0)
     -- Z axis (blue)
-    Aliens.draw_debug_line(renderer, x, y, z - axis_length, x, y, z + axis_length, blue)
+    Aliens.draw_debug_line(renderer, x, y, z - axis_length, x, y, z + axis_length, 0, 100, 255)
 
-    -- Draw bounding box (wireframe)
+    -- Draw bounding box (wireframe) - yellow
     local r = radius
     -- Bottom face edges
-    Aliens.draw_debug_line(renderer, x-r, y-r, z-r, x+r, y-r, z-r, yellow)
-    Aliens.draw_debug_line(renderer, x+r, y-r, z-r, x+r, y-r, z+r, yellow)
-    Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x-r, y-r, z+r, yellow)
-    Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y-r, z-r, yellow)
+    Aliens.draw_debug_line(renderer, x-r, y-r, z-r, x+r, y-r, z-r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z-r, x+r, y-r, z+r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x-r, y-r, z+r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y-r, z-r, 255, 255, 0)
     -- Top face edges
-    Aliens.draw_debug_line(renderer, x-r, y+r, z-r, x+r, y+r, z-r, yellow)
-    Aliens.draw_debug_line(renderer, x+r, y+r, z-r, x+r, y+r, z+r, yellow)
-    Aliens.draw_debug_line(renderer, x+r, y+r, z+r, x-r, y+r, z+r, yellow)
-    Aliens.draw_debug_line(renderer, x-r, y+r, z+r, x-r, y+r, z-r, yellow)
+    Aliens.draw_debug_line(renderer, x-r, y+r, z-r, x+r, y+r, z-r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x+r, y+r, z-r, x+r, y+r, z+r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x+r, y+r, z+r, x-r, y+r, z+r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x-r, y+r, z+r, x-r, y+r, z-r, 255, 255, 0)
     -- Vertical edges
-    Aliens.draw_debug_line(renderer, x-r, y-r, z-r, x-r, y+r, z-r, yellow)
-    Aliens.draw_debug_line(renderer, x+r, y-r, z-r, x+r, y+r, z-r, yellow)
-    Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x+r, y+r, z+r, yellow)
-    Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y+r, z+r, yellow)
+    Aliens.draw_debug_line(renderer, x-r, y-r, z-r, x-r, y+r, z-r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z-r, x+r, y+r, z-r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x+r, y+r, z+r, 255, 255, 0)
+    Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y+r, z+r, 255, 255, 0)
 
-    -- Draw velocity vector (cyan/magenta line showing movement direction)
+    -- Draw velocity vector (colored line showing movement direction)
     local vel_scale = 2.0  -- Scale velocity for visibility
     local vx, vy, vz = alien.vx * vel_scale, alien.vy * vel_scale, alien.vz * vel_scale
-    Aliens.draw_debug_line(renderer, x, y, z, x + vx, y + vy, z + vz, velocity_color)
+    Aliens.draw_debug_line(renderer, x, y, z, x + vx, y + vy, z + vz, vel_r, vel_g, vel_b)
 
     -- Draw target line (red line to target)
     if alien.target then
         local tx, ty, tz = alien.target.x, alien.target.y, alien.target.z
-        local target_red = {getPixel = function() return 255, 50, 50, 200 end}
-        Aliens.draw_debug_line(renderer, x, y, z, tx, ty, tz, target_red)
+        Aliens.draw_debug_line(renderer, x, y, z, tx, ty, tz, 255, 50, 50)
     end
 end
 
--- Draw a debug line as a thin 3D quad
-function Aliens.draw_debug_line(renderer, x1, y1, z1, x2, y2, z2, color)
-    local thickness = 0.02
-
-    -- Direction vector
-    local dx = x2 - x1
-    local dy = y2 - y1
-    local dz = z2 - z1
-    local len = math.sqrt(dx*dx + dy*dy + dz*dz)
-    if len < 0.001 then return end
-
-    -- Normalize
-    dx, dy, dz = dx/len, dy/len, dz/len
-
-    -- Find a perpendicular vector (cross with up, or right if too parallel)
-    local px, py, pz
-    if math.abs(dy) < 0.9 then
-        -- Cross with up (0,1,0)
-        px = dz
-        py = 0
-        pz = -dx
-    else
-        -- Cross with right (1,0,0)
-        px = 0
-        py = -dz
-        pz = dy
-    end
-
-    -- Normalize perpendicular
-    local plen = math.sqrt(px*px + py*py + pz*pz)
-    if plen > 0.001 then
-        px, py, pz = px/plen * thickness, py/plen * thickness, pz/plen * thickness
-    end
-
-    -- Create quad vertices
-    local v1 = {pos = {x1 - px, y1 - py, z1 - pz}, uv = {0, 0}}
-    local v2 = {pos = {x1 + px, y1 + py, z1 + pz}, uv = {1, 0}}
-    local v3 = {pos = {x2 + px, y2 + py, z2 + pz}, uv = {1, 1}}
-    local v4 = {pos = {x2 - px, y2 - py, z2 - pz}, uv = {0, 1}}
-
-    -- Draw as two triangles
-    renderer.drawTriangle3D(v1, v2, v3, nil, color)
-    renderer.drawTriangle3D(v1, v3, v4, nil, color)
+-- Draw a debug line using renderer's line drawing
+function Aliens.draw_debug_line(renderer, x1, y1, z1, x2, y2, z2, r, g, b)
+    -- Use the renderer's built-in line drawing
+    renderer.drawLine3D({x1, y1, z1}, {x2, y2, z2}, r or 255, g or 50, b or 50, false)
 end
 
 return Aliens

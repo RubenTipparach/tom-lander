@@ -29,6 +29,7 @@ local Turret = require("turret")
 local Shadow = require("graphics.shadow")
 local ShadowMap = require("graphics.shadow_map")
 local Fireworks = require("fireworks")
+local Billboard = require("billboard")
 
 local flight_scene = {}
 
@@ -516,6 +517,9 @@ function flight_scene.update(dt)
     -- Update fireworks (for lap completion celebrations)
     Fireworks.update(dt)
 
+    -- Update billboards
+    Billboard.update(dt)
+
     -- Update combat systems (Mission 6)
     if combat_active then
         -- Wave start delay
@@ -778,6 +782,9 @@ function flight_scene.draw()
     -- Draw smoke particles (disabled - billboard rendering needs fixing)
     -- smoke_system:draw(renderer, cam)
 
+    -- Draw billboards (camera-facing smoke/particle quads) - must be before flush3D
+    Billboard.draw(renderer, viewMatrix, cam)
+
     -- Draw rain as depth-tested 3D geometry (MUST be before flush3D for proper occlusion)
     Weather.draw_rain(renderer, cam, ship.vx, ship.vy, ship.vz)
 
@@ -945,6 +952,12 @@ function flight_scene.keypressed(key)
             cargo.attached_to_ship = false
             cargo.collected = false
         end
+    end
+
+    -- B key - spawn test billboard above ship (free flight only)
+    if key == "b" and not Mission.is_active() then
+        Billboard.spawn(ship.x, ship.y + 0.2, ship.z, 0.5, 3.0)
+        print("Spawned billboard at ship position")
     end
 end
 
