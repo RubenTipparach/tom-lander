@@ -8,18 +8,18 @@
 ### Day 1: Monday Jan 12 - Core Systems
 | Priority | Task | Status |
 |----------|------|--------|
-| P0 | Ship damage visual system (hull cracks, smoke) | [ ] |
-| P0 | Ship impact explosions (small hits) | [ ] |
-| P0 | Big ship explosion (death sequence) | [ ] |
+| P0 | Ship damage visual system (hull cracks, smoke) | [x] |
+| P0 | Ship impact explosions (small hits) | [x] |
+| P0 | Big ship explosion (death sequence) | [x] |
 | P0 | Billboard smoke system for explosions | [x] |
 
 ### Day 2: Tuesday Jan 13 - Audio System
 | Priority | Task | Status |
 |----------|------|--------|
-| P0 | Port audio_manager.lua to Love2D | [ ] |
-| P0 | Port all SFX (see list below) | [ ] |
+| P0 | Port audio_manager.lua to Love2D | [x] |
+| P0 | Port all SFX (see list below) | [x] |
 | P0 | Port all music tracks (see list below) | [ ] |
-| P1 | Enemy explosion effects | [ ] |
+| P1 | Enemy explosion effects | [x] |
 
 ### Day 3: Wednesday Jan 14 - Polish & Testing
 | Priority | Task | Status |

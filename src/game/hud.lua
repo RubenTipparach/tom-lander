@@ -204,7 +204,7 @@ function HUD.draw_compass(ship, camera, mission_target)
     local vx = ship.vx or 0
     local vy = ship.vy or 0
     local vz = ship.vz or 0
-    local speed = math.sqrt(vx*vx + vy*vy + vz*vz) * 10  -- Convert to m/s (1 unit = 10m)
+    local speed = math.sqrt(vx*vx + vy*vy + vz*vz) * 100  -- Convert to m/s (1 unit = 100m)
     renderer.drawText(COMPASS_X + 20, COMPASS_Y + 2,
                       "SPD: " .. math.floor(speed) .. "m/s",
                       COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)

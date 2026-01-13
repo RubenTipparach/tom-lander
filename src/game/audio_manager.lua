@@ -6,12 +6,16 @@ local AudioManager = {}
 
 -- Sound effect definitions (mapped from Picotron sfx IDs)
 -- Picotron: sfx(0) = shoot, sfx(1) = thruster, sfx(3) = explosion, sfx(8) = collide
+-- cooldown: minimum seconds between plays (prevents overlap spam)
 AudioManager.sfx_files = {
     [0] = { name = "shoot", file = "assets/sounds/shoot.wav", source = nil },
     [1] = { name = "thruster", file = "assets/sounds/thruster.wav", source = nil, looping = true },
-    [3] = { name = "explosion", file = "assets/sounds/explosion.wav", source = nil },
-    [8] = { name = "collide", file = "assets/sounds/collide.wav", source = nil },
+    [3] = { name = "explosion", file = "assets/sounds/explosion.wav", source = nil, cooldown = 0.1 },
+    [8] = { name = "collide", file = "assets/sounds/collide.wav", source = nil, cooldown = 0.15 },
 }
+
+-- Track last play time for cooldown management
+AudioManager.sfx_last_played = {}
 
 -- Music definitions
 AudioManager.music_files = {
@@ -80,6 +84,16 @@ function AudioManager.play_sfx(sfx_id, volume)
     local sfx = AudioManager.sfx_files[sfx_id]
     if not sfx or not sfx.source then
         return
+    end
+
+    -- Check cooldown if defined
+    if sfx.cooldown then
+        local current_time = love.timer.getTime()
+        local last_played = AudioManager.sfx_last_played[sfx_id] or 0
+        if current_time - last_played < sfx.cooldown then
+            return  -- Still on cooldown, skip playing
+        end
+        AudioManager.sfx_last_played[sfx_id] = current_time
     end
 
     -- For non-looping sounds, clone the source so multiple can play

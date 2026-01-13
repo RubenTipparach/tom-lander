@@ -74,6 +74,12 @@ local race_victory_mode = false
 local race_victory_cam_angle = 0  -- Camera orbit angle around ship
 local race_victory_ship_pos = {x = 0, y = 0, z = 0}  -- Frozen ship position
 
+-- Mission complete celebration state (non-race missions)
+local mission_complete_mode = false
+local mission_complete_cam_angle = 0
+local mission_complete_ship_pos = {x = 0, y = 0, z = 0}
+local mission_complete_timer = 0
+
 -- Ship death state
 local ship_death_mode = false
 local ship_death_timer = 0
@@ -88,6 +94,9 @@ local is_repairing = false
 local thrusterFont = nil
 
 function flight_scene.load()
+    -- Stop menu music when entering flight scene
+    AudioManager.stop_music()
+
     -- Renderer already initialized in main.lua
     -- softwareImage only needed for DDA renderer (GPU renderer handles its own presentation)
     local imageData = renderer.getImageData()
@@ -230,19 +239,18 @@ function flight_scene.load()
     -- Start mission or race if selected
     if current_mission_num then
         Missions.start(current_mission_num, Mission)
-        -- Start mission-specific music
-        AudioManager.start_level_music(current_mission_num)
+        -- Start mission-specific music (disabled for now)
+        -- AudioManager.start_level_music(current_mission_num)
     elseif current_track_num then
         Missions.start_race_track(current_track_num, Mission)
-        -- Racing mode uses mission 7 music mapping
-        AudioManager.start_level_music(7)
+        -- Racing mode uses mission 7 music mapping (disabled for now)
+        -- AudioManager.start_level_music(7)
     else
-        -- Free flight - use menu music at lower volume
-        AudioManager.start_level_music(nil)
+        -- Free flight - no music
     end
 
-    -- Initialize combat systems for Mission 6
-    combat_active = (current_mission_num == 6)
+    -- Initialize combat systems for Mission 7 (Alien Invasion)
+    combat_active = (current_mission_num == 7)
     if combat_active then
         -- Reset combat state
         Aliens.reset()
@@ -342,6 +350,20 @@ function flight_scene.update(dt)
         ship.vz = 0
     end
 
+    -- Check if non-race mission just completed - enter mission complete mode
+    if Mission.is_complete() and not race_victory_mode and not mission_complete_mode and Mission.type ~= "race" then
+        mission_complete_mode = true
+        mission_complete_cam_angle = cam.yaw  -- Start from current camera angle
+        mission_complete_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
+        mission_complete_timer = 0
+        -- Zero out ship velocity to freeze it
+        ship.vx = 0
+        ship.vy = 0
+        ship.vz = 0
+        -- Trigger celebration fireworks!
+        Fireworks.celebrate(ship.x, ship.y, ship.z)
+    end
+
     -- Race victory mode: freeze ship but orbit camera
     if race_victory_mode then
         -- Keep ship frozen at victory position
@@ -381,6 +403,54 @@ function flight_scene.update(dt)
 
         -- Point camera at ship
         cam.yaw = race_victory_cam_angle + math.pi  -- Face toward ship center
+        cam.pitch = 0.2  -- Slight downward angle
+
+        camera_module.updateVectors(cam)
+        profile("update")
+        return
+    end
+
+    -- Mission complete mode: freeze ship but orbit camera (non-race missions)
+    if mission_complete_mode then
+        mission_complete_timer = mission_complete_timer + dt
+
+        -- Keep ship frozen at victory position
+        ship.x = mission_complete_ship_pos.x
+        ship.y = mission_complete_ship_pos.y
+        ship.z = mission_complete_ship_pos.z
+
+        -- Keep thrusters active for flame animation (gentle hover effect)
+        for _, thruster in ipairs(ship.thrusters) do
+            thruster.active = true
+        end
+
+        -- Update fireworks during victory celebration
+        Fireworks.update(dt)
+
+        -- Launch more fireworks periodically during victory
+        if math.random() < dt * 2 then  -- Roughly 2 per second
+            local angle = math.random() * math.pi * 2
+            local dist = 8 + math.random() * 8
+            Fireworks.launch(
+                ship.x + math.sin(angle) * dist,
+                ship.y - 2,
+                ship.z + math.cos(angle) * dist,
+                1.2
+            )
+        end
+
+        -- Orbit camera around ship
+        mission_complete_cam_angle = mission_complete_cam_angle + dt * 0.3  -- Slow rotation
+        local orbit_dist = 12  -- Distance from ship
+        local orbit_height = 3  -- Height above ship
+
+        -- Calculate camera position on orbit
+        cam.pos.x = ship.x + math.sin(mission_complete_cam_angle) * orbit_dist
+        cam.pos.y = ship.y + orbit_height
+        cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * orbit_dist
+
+        -- Point camera at ship
+        cam.yaw = mission_complete_cam_angle + math.pi  -- Face toward ship center
         cam.pitch = 0.2  -- Slight downward angle
 
         camera_module.updateVectors(cam)
@@ -516,11 +586,17 @@ function flight_scene.update(dt)
                 end
             elseif ship_bottom < building_top and ship_top > building_bottom then
                 -- Side collision: ship is inside building volume - push out
+                local old_x, old_z = ship.x, ship.z
                 ship.x, ship.z = Collision.push_out_of_box(
                     ship.x, ship.z,
                     building.x, building.z,
                     half_width, half_depth
                 )
+
+                -- Calculate bounce direction (away from building)
+                local push_dx = ship.x - old_x
+                local push_dz = ship.z - old_z
+                local push_len = math.sqrt(push_dx * push_dx + push_dz * push_dz)
 
                 -- Damage based on collision speed (configurable multiplier)
                 local collision_speed = math.sqrt(ship.vx*ship.vx + ship.vy*ship.vy + ship.vz*ship.vz)
@@ -532,9 +608,20 @@ function flight_scene.update(dt)
                     AudioManager.play_sfx(8)  -- Collision sound
                 end
 
-                -- Kill velocity when hitting side
-                ship.vx = ship.vx * 0.5
-                ship.vz = ship.vz * 0.5
+                -- Bounce off building - reverse and reduce velocity, add push force
+                local bounce_factor = 0.5  -- How much velocity is preserved (reversed)
+                local push_force = math.max(collision_speed * 0.3, 0.05)  -- Minimum push to escape
+
+                if push_len > 0.001 then
+                    -- Normalize push direction and apply bounce
+                    local nx, nz = push_dx / push_len, push_dz / push_len
+                    ship.vx = -ship.vx * bounce_factor + nx * push_force
+                    ship.vz = -ship.vz * bounce_factor + nz * push_force
+                else
+                    -- Fallback: just reverse velocity
+                    ship.vx = -ship.vx * bounce_factor
+                    ship.vz = -ship.vz * bounce_factor
+                end
             end
         end
     end
@@ -1067,6 +1154,36 @@ function flight_scene.draw()
         renderer.drawText(config.RENDER_WIDTH / 2 - #restart_text * 4, config.RENDER_HEIGHT / 2 + 10, restart_text, 255, 255, 255)
         renderer.drawText(config.RENDER_WIDTH / 2 - #quit_text * 4, config.RENDER_HEIGHT / 2 + 25, quit_text, 200, 200, 200)
     end
+
+    -- Draw mission complete celebration panel (non-race missions)
+    if mission_complete_mode then
+        -- Panel dimensions
+        local panel_width = 160
+        local panel_height = 80
+        local panel_x = (config.RENDER_WIDTH - panel_width) / 2
+        local panel_y = (config.RENDER_HEIGHT - panel_height) / 2 - 20
+
+        -- Draw panel background with border
+        renderer.drawRectFill(panel_x - 2, panel_y - 2, panel_width + 4, panel_height + 4, 255, 215, 0, 255)  -- Gold border
+        renderer.drawRectFill(panel_x, panel_y, panel_width, panel_height, 20, 40, 80, 240)  -- Dark blue background
+
+        -- "MISSION COMPLETE" title
+        local title = "MISSION COMPLETE!"
+        local title_x = config.RENDER_WIDTH / 2 - #title * 4
+        local title_y = panel_y + 12
+        renderer.drawText(title_x, title_y, title, 255, 215, 0)  -- Gold text
+
+        -- Mission name
+        local mission_name = Mission.mission_name or "Mission"
+        local name_x = config.RENDER_WIDTH / 2 - #mission_name * 4
+        renderer.drawText(name_x, title_y + 18, mission_name, 255, 255, 255)
+
+        -- Instructions
+        local quit_text = "[Q] Return to Menu"
+        local restart_text = "[R] Replay Mission"
+        renderer.drawText(config.RENDER_WIDTH / 2 - #quit_text * 4, panel_y + panel_height - 28, quit_text, 200, 255, 200)
+        renderer.drawText(config.RENDER_WIDTH / 2 - #restart_text * 4, panel_y + panel_height - 14, restart_text, 180, 180, 180)
+    end
     profile(" hud")
 
     profile("present")
@@ -1083,6 +1200,7 @@ function flight_scene.keypressed(key)
     if Mission.is_complete() and key == "q" then
         Mission.reset()
         race_victory_mode = false  -- Reset victory mode
+        mission_complete_mode = false  -- Reset mission complete mode
         Fireworks.reset()  -- Clear fireworks
         if combat_active then
             Aliens.reset()
@@ -1101,6 +1219,7 @@ function flight_scene.keypressed(key)
             HUD.close_pause()
             Mission.reset()
             race_victory_mode = false  -- Reset victory mode
+            mission_complete_mode = false  -- Reset mission complete mode
             Fireworks.reset()  -- Clear fireworks
             if combat_active then
                 Aliens.reset()
@@ -1155,6 +1274,7 @@ function flight_scene.keypressed(key)
 
         -- Reset victory mode and fireworks
         race_victory_mode = false
+        mission_complete_mode = false
         Fireworks.reset()
 
         -- Reset mission or race if active
@@ -1162,11 +1282,11 @@ function flight_scene.keypressed(key)
             Mission.reset()
             if current_mission_num then
                 Missions.start(current_mission_num, Mission)
-                -- Restart mission music
-                AudioManager.start_level_music(current_mission_num)
+                -- Restart mission music (disabled for now)
+                -- AudioManager.start_level_music(current_mission_num)
 
-                -- Reset combat for Mission 6
-                if current_mission_num == 6 then
+                -- Reset combat for Mission 7
+                if current_mission_num == 7 then
                     Aliens.reset()
                     Bullets.reset()
                     Turret.reset()
@@ -1174,8 +1294,8 @@ function flight_scene.keypressed(key)
                 end
             elseif current_track_num then
                 Missions.start_race_track(current_track_num, Mission)
-                -- Restart racing music
-                AudioManager.start_level_music(7)
+                -- Restart racing music (disabled for now)
+                -- AudioManager.start_level_music(7)
             end
         end
 

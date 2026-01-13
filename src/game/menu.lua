@@ -328,50 +328,29 @@ end
 -- Update campaign options (mission list)
 function menu.update_campaign_options()
     menu.campaign_options = {}
+    local Missions = require("missions")
 
-    -- Mission 0: Story (always unlocked)
-    table.insert(menu.campaign_options, {text = "MISSION 0: TOM LANDER", action = "story", locked = false})
+    -- Mission 0: Intro cutscene (always unlocked)
+    table.insert(menu.campaign_options, {text = "MISSION 0: INTRO CUTSCENE", action = "story", locked = false})
 
-    -- Mission 1
-    if SaveData.is_mission_unlocked(1) then
-        table.insert(menu.campaign_options, {text = "MISSION 1: ENGINE TEST", mission = 1, locked = false})
-    else
-        table.insert(menu.campaign_options, {text = "MISSION 1: [LOCKED]", mission = 1, locked = true})
-    end
+    -- Dynamically add all missions from MISSION_LIST
+    for _, mission_info in ipairs(Missions.MISSION_LIST) do
+        local mission_num = mission_info.id
+        local mission_name = string.upper(mission_info.name)
 
-    -- Mission 2
-    if SaveData.is_mission_unlocked(2) then
-        table.insert(menu.campaign_options, {text = "MISSION 2: CARGO DELIVERY", mission = 2, locked = false})
-    else
-        table.insert(menu.campaign_options, {text = "MISSION 2: [LOCKED]", mission = 2, locked = true})
-    end
-
-    -- Mission 3
-    if SaveData.is_mission_unlocked(3) then
-        table.insert(menu.campaign_options, {text = "MISSION 3: SCIENTIFIC MISSION", mission = 3, locked = false})
-    else
-        table.insert(menu.campaign_options, {text = "MISSION 3: [LOCKED]", mission = 3, locked = true})
-    end
-
-    -- Mission 4
-    if SaveData.is_mission_unlocked(4) then
-        table.insert(menu.campaign_options, {text = "MISSION 4: OCEAN RESCUE", mission = 4, locked = false})
-    else
-        table.insert(menu.campaign_options, {text = "MISSION 4: [LOCKED]", mission = 4, locked = true})
-    end
-
-    -- Mission 5
-    if SaveData.is_mission_unlocked(5) then
-        table.insert(menu.campaign_options, {text = "MISSION 5: SECRET WEAPON", mission = 5, locked = false})
-    else
-        table.insert(menu.campaign_options, {text = "MISSION 5: [LOCKED]", mission = 5, locked = true})
-    end
-
-    -- Mission 6
-    if SaveData.is_mission_unlocked(6) then
-        table.insert(menu.campaign_options, {text = "MISSION 6: ALIEN INVASION", mission = 6, locked = false})
-    else
-        table.insert(menu.campaign_options, {text = "MISSION 6: [LOCKED]", mission = 6, locked = true})
+        if SaveData.is_mission_unlocked(mission_num) then
+            table.insert(menu.campaign_options, {
+                text = "MISSION " .. mission_num .. ": " .. mission_name,
+                mission = mission_num,
+                locked = false
+            })
+        else
+            table.insert(menu.campaign_options, {
+                text = "MISSION " .. mission_num .. ": [LOCKED]",
+                mission = mission_num,
+                locked = true
+            })
+        end
     end
 
     table.insert(menu.campaign_options, {text = "RESET PROGRESS", action = "reset", locked = false})

@@ -20,27 +20,32 @@ Mission.CARGO_DELIVERY_DELAY = 1.0  -- Time to wait on pad before cargo delivery
 -- Mission 1: Engine Test
 Mission.M1_HOVER_DURATION = 5  -- How long to hover in seconds
 
--- Mission 2: Cargo Delivery
-Mission.M2_CARGO_DISTANCE_X = -100  -- Cargo X offset from landing pad
-Mission.M2_CARGO_DISTANCE_Z = 20     -- Cargo Z offset from landing pad
+-- Mission 2: Cargo Basics (Tutorial - nearby cargo)
+Mission.M2_CARGO_DISTANCE_X = 0     -- Cargo X offset from landing pad
+Mission.M2_CARGO_DISTANCE_Z = -6   -- Cargo Z offset (10 units north)
 Mission.M2_CARGO_COUNT = 1          -- Number of cargo boxes
 
--- Mission 3: Scientific Mission
-Mission.M3_BUILDING_ID = 10         -- Building ID for Command Tower
-Mission.M3_LANDING_PAD_ID = 4       -- Landing Pad D
-Mission.M3_CARGO_COUNT = 1          -- Number of scientist pods
+-- Mission 3: Cargo Delivery (farther cargo)
+Mission.M3_CARGO_DISTANCE_X = -100  -- Cargo X offset from landing pad
+Mission.M3_CARGO_DISTANCE_Z = 20    -- Cargo Z offset from landing pad
+Mission.M3_CARGO_COUNT = 1          -- Number of cargo boxes
 
--- Mission 4: Ocean Rescue
-Mission.M4_CARGO_ASEPRITE_X = 105   -- Cargo pickup location
-Mission.M4_CARGO_ASEPRITE_Z = 57    -- Cargo pickup location
-Mission.M4_LANDING_PAD_ID = 2       -- Landing Pad B
-Mission.M4_CARGO_COUNT = 1          -- Number of cargo boxes
+-- Mission 4: Scientific Mission
+Mission.M4_BUILDING_ID = 10         -- Building ID for Command Tower
+Mission.M4_LANDING_PAD_ID = 4       -- Landing Pad D
+Mission.M4_CARGO_COUNT = 1          -- Number of scientist pods
 
--- Mission 5: Secret Weapon
-Mission.M5_CARGO_ASEPRITE_X = 54    -- Cargo location
-Mission.M5_CARGO_ASEPRITE_Z = 60    -- Cargo location
-Mission.M5_LANDING_PAD_ID = 3       -- Landing Pad C
+-- Mission 5: Ocean Rescue
+Mission.M5_CARGO_ASEPRITE_X = 105   -- Cargo pickup location
+Mission.M5_CARGO_ASEPRITE_Z = 57    -- Cargo pickup location
+Mission.M5_LANDING_PAD_ID = 2       -- Landing Pad B
 Mission.M5_CARGO_COUNT = 1          -- Number of cargo boxes
+
+-- Mission 6: Secret Weapon
+Mission.M6_CARGO_ASEPRITE_X = 54    -- Cargo location
+Mission.M6_CARGO_ASEPRITE_Z = 60    -- Cargo location
+Mission.M6_LANDING_PAD_ID = 3       -- Landing Pad C
+Mission.M6_CARGO_COUNT = 1          -- Number of cargo boxes
 
 -- Mission state
 Mission.current_objectives = {}
