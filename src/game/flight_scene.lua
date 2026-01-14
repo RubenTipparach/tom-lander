@@ -45,6 +45,11 @@ local softwareImage  -- Only used by software renderer, unused with GPU renderer
 local projMatrix
 local follow_camera = true
 
+-- Camera mode: "follow" (default), "free", "focus"
+local camera_mode = "follow"
+local prev_camera_mode = "follow"  -- Track previous mode for smooth transitions
+local camera_mode_names = {"follow", "free", "focus"}
+
 -- Camera settings
 -- Note: Picotron runs at 60fps and applies lerp per-frame
 local camera_lerp_speed = config.CAMERA_LERP_SPEED
@@ -91,10 +96,15 @@ local ship_death_landed = false  -- True once ship has hit the ground
 local repair_timer = 0
 local is_repairing = false
 
+-- Debug timer for camera vectors
+local follow_cam_debug_timer = 0
+local cam_orientation = nil  -- Camera orientation quaternion for follow mode
+
 -- Fonts
 local thrusterFont = nil
 
 function flight_scene.load()
+    print("[FLIGHT] Flight scene loaded - camera mode: " .. camera_mode)
     -- Stop menu music when entering flight scene
     AudioManager.stop_music()
 
@@ -244,6 +254,8 @@ function flight_scene.load()
         -- AudioManager.start_level_music(current_mission_num)
     elseif current_track_num then
         Missions.start_race_track(current_track_num, Mission)
+        -- Racing mode defaults to focus camera (looks at next checkpoint)
+        camera_mode = "focus"
         -- Racing mode uses mission 7 music mapping (disabled for now)
         -- AudioManager.start_level_music(7)
     else
@@ -840,8 +852,8 @@ function flight_scene.update(dt)
             end
         end
 
-        -- Check if wave complete and start next
-        if Aliens.wave_complete and not Aliens.all_waves_complete() then
+        -- Check if wave complete and start next (only if not already waiting)
+        if Aliens.wave_complete and not Aliens.all_waves_complete() and wave_start_delay <= 0 then
             wave_start_delay = 3.0  -- Delay between waves
             Aliens.wave_complete = false
         end
@@ -883,7 +895,7 @@ function flight_scene.update(dt)
             end
         end
         if Aliens.mother_ship then
-            local hits = Bullets.check_collision_sphere("enemy", Aliens.mother_ship.x, Aliens.mother_ship.y, Aliens.mother_ship.z, 2.0)
+            local hits = Bullets.check_collision_sphere("enemy", Aliens.mother_ship.x, Aliens.mother_ship.y, Aliens.mother_ship.z, Aliens.MOTHER_SHIP_COLLISION_RADIUS)
             for _, hit in ipairs(hits) do
                 -- Random damage 5-10 per bullet
                 local damage = 5 + math.random() * 5
@@ -905,43 +917,201 @@ function flight_scene.update(dt)
         ship:auto_level(dt)
     end
 
-    -- Camera rotation with arrow keys (frame-rate independent)
+    -- Camera rotation (depends on camera mode)
     local timeScale = dt * 60  -- Scale for 60 FPS equivalence
-    if love.keyboard.isDown("left") then
-        cam.yaw = cam.yaw - cam_rot_speed * timeScale
-    end
-    if love.keyboard.isDown("right") then
-        cam.yaw = cam.yaw + cam_rot_speed * timeScale
-    end
-    if love.keyboard.isDown("up") then
-        cam.pitch = cam.pitch - cam_rot_speed * 0.6 * timeScale  -- Pitch up
-    end
-    if love.keyboard.isDown("down") then
-        cam.pitch = cam.pitch + cam_rot_speed * 0.6 * timeScale  -- Pitch down
-    end
 
-    -- Mouse camera control (hold left or right mouse button to rotate)
-    local mouse_x, mouse_y = love.mouse.getPosition()
-    if love.mouse.isDown(1) or love.mouse.isDown(2) then  -- Left or right mouse button
-        if mouse_camera_enabled then
-            local dx = mouse_x - last_mouse_x
-            local dy = mouse_y - last_mouse_y
-            cam.yaw = cam.yaw + dx * mouse_sensitivity
-            cam.pitch = cam.pitch + dy * mouse_sensitivity
-            -- Clamp pitch to prevent flipping
-            cam.pitch = math.max(-1.5, math.min(1.5, cam.pitch))
+    if camera_mode == "free" then
+        -- FREE MODE: Arrow keys and mouse control camera rotation
+        if love.keyboard.isDown("left") then
+            cam.yaw = cam.yaw - cam_rot_speed * timeScale
         end
-        mouse_camera_enabled = true
-    else
-        mouse_camera_enabled = false
+        if love.keyboard.isDown("right") then
+            cam.yaw = cam.yaw + cam_rot_speed * timeScale
+        end
+        if love.keyboard.isDown("up") then
+            cam.pitch = cam.pitch - cam_rot_speed * 0.6 * timeScale
+        end
+        if love.keyboard.isDown("down") then
+            cam.pitch = cam.pitch + cam_rot_speed * 0.6 * timeScale
+        end
+
+        -- Mouse camera control
+        local mouse_x, mouse_y = love.mouse.getPosition()
+        if love.mouse.isDown(1) or love.mouse.isDown(2) then
+            if mouse_camera_enabled then
+                local dx = mouse_x - last_mouse_x
+                local dy = mouse_y - last_mouse_y
+                cam.yaw = cam.yaw + dx * mouse_sensitivity
+                cam.pitch = cam.pitch + dy * mouse_sensitivity
+                cam.pitch = math.max(-1.5, math.min(1.5, cam.pitch))
+            end
+            mouse_camera_enabled = true
+        else
+            mouse_camera_enabled = false
+        end
+        last_mouse_x, last_mouse_y = mouse_x, mouse_y
+
+        -- Debug print every 5 seconds
+        follow_cam_debug_timer = follow_cam_debug_timer + dt
+        if follow_cam_debug_timer >= 5 then
+            follow_cam_debug_timer = 0
+            -- Use camera module's forward vector (updated by updateVectors)
+            camera_module.updateVectors(cam)
+            local horiz_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
+            print("=== FREE CAMERA DEBUG ===")
+            print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
+            print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
+            print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam.forward.x, cam.forward.y, cam.forward.z))
+            print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
+                ship.vx, ship.vy, ship.vz, horiz_speed))
+            print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+        end
+
+    elseif camera_mode == "follow" then
+        -- FOLLOW MODE: Camera follows behind ship, looking toward it
+        -- Per user diagram:
+        -- - Camera positioned BEHIND ship (opposite of velocity direction)
+        -- - Camera LOOKS TOWARD ship (in velocity direction from camera's perspective)
+        --
+        -- This section ONLY handles rotation (quaternion).
+        -- Position is handled in the later position update section.
+
+        -- Initialize quaternion from current yaw/pitch (on mode switch or first time)
+        if not cam_orientation or prev_camera_mode ~= "follow" then
+            -- Build quaternion from current camera yaw and pitch for smooth transition
+            local yaw_quat = quat.fromAxisAngle(0, 1, 0, cam.yaw)
+            local pitch_quat = quat.fromAxisAngle(1, 0, 0, cam.pitch)
+            cam_orientation = quat.multiply(yaw_quat, pitch_quat)
+        end
+
+        -- Ship horizontal velocity (for yaw direction)
+        local horizontal_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
+
+        if horizontal_speed > 0.01 then
+            -- Normalized horizontal velocity direction
+            local vel_x = ship.vx / horizontal_speed
+            local vel_z = ship.vz / horizontal_speed
+
+            -- Target yaw: camera looks OPPOSITE to velocity direction
+            -- This way, with cam_dist offset, the ship appears in front of the camera
+            local target_yaw = math.atan2(vel_x, -vel_z)
+
+            -- Target pitch: subtle tilt based on vertical movement, but limited
+            -- Use full 3D speed for pitch calculation
+            local ship_speed = math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy + ship.vz * ship.vz)
+            local target_pitch = 0
+            if ship_speed > 0.01 then
+                -- Pitch based on ratio of vertical to horizontal speed
+                -- Positive vy (going up) -> positive pitch (look down at ship)
+                -- Negative vy (going down) -> negative pitch (look up at ship)
+                local pitch_ratio = ship.vy / ship_speed
+                target_pitch = pitch_ratio * 0.4  -- Limit to ~23 degrees max
+                target_pitch = math.max(-0.4, math.min(0.4, target_pitch))
+            end
+
+            -- Build target quaternion: yaw around Y, then pitch around X
+            -- For "yaw then pitch in local frame", we use: yaw * pitch
+            local yaw_quat = quat.fromAxisAngle(0, 1, 0, target_yaw)
+            local pitch_quat = quat.fromAxisAngle(1, 0, 0, target_pitch)
+            local target_quat = quat.multiply(yaw_quat, pitch_quat)
+
+            -- Slerp toward target
+            local slerp_speed = 0.08 * timeScale
+            cam_orientation = quat.slerp(cam_orientation, target_quat, slerp_speed)
+            cam_orientation = quat.normalize(cam_orientation)
+        end
+
+        -- Get forward direction from quaternion
+        local cam_fwd_x, cam_fwd_y, cam_fwd_z = quat.rotateVector(cam_orientation, 0, 0, 1)
+
+        -- Extract yaw/pitch from forward vector for view matrix
+        -- Camera convention: forward = (sin(yaw)*cos(pitch), -sin(pitch), cos(yaw)*cos(pitch))
+        cam.yaw = math.atan2(cam_fwd_x, cam_fwd_z)
+        cam.pitch = math.asin(math.max(-1, math.min(1, -cam_fwd_y)))
+
+        -- Debug print every 5 seconds
+        follow_cam_debug_timer = follow_cam_debug_timer + dt
+        if follow_cam_debug_timer >= 5 then
+            follow_cam_debug_timer = 0
+            print("=== FOLLOW CAMERA DEBUG ===")
+            print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
+            print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
+            print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam_fwd_x, cam_fwd_y, cam_fwd_z))
+            print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
+                ship.vx, ship.vy, ship.vz, horizontal_speed))
+            print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+        end
+
+        -- Update mouse position tracking
+        last_mouse_x, last_mouse_y = love.mouse.getPosition()
+
+    elseif camera_mode == "focus" then
+        -- FOCUS MODE: Camera looks at current target/goal
+        local target = HUD.get_target()
+        if not target and Mission.is_active() then
+            target = Mission.get_target()
+        end
+
+        if target then
+            -- Calculate direction to target (same convention as guide arrow)
+            local dx = target.x - cam.pos.x
+            local dz = target.z - cam.pos.z
+            local dy = (target.y or ship.y) - cam.pos.y
+            local dist_xz = math.sqrt(dx * dx + dz * dz)
+
+            -- Target yaw (horizontal direction) - negate dz for camera convention
+            local target_yaw = math.atan2(dx, -dz)
+            local yaw_diff = target_yaw - cam.yaw
+            while yaw_diff > math.pi do yaw_diff = yaw_diff - math.pi * 2 end
+            while yaw_diff < -math.pi do yaw_diff = yaw_diff + math.pi * 2 end
+            cam.yaw = cam.yaw + yaw_diff * 0.1 * timeScale
+
+            -- Target pitch (vertical angle)
+            local target_pitch = math.atan2(dy, dist_xz)
+            target_pitch = math.max(-1.2, math.min(1.2, target_pitch))
+            cam.pitch = cam.pitch + (target_pitch - cam.pitch) * 0.1 * timeScale
+        else
+            -- No target - fall back to follow mode behavior
+            local speed_sq = ship.vx * ship.vx + ship.vz * ship.vz
+
+            if speed_sq > 0.001 then
+                local speed = math.sqrt(speed_sq)
+                local move_dir_x = ship.vx / speed
+                local move_dir_z = ship.vz / speed
+
+                -- Camera looks opposite to velocity (same as follow mode)
+                local target_yaw = math.atan2(move_dir_x, -move_dir_z)
+                local angle_diff = target_yaw - cam.yaw
+                while angle_diff > math.pi do angle_diff = angle_diff - math.pi * 2 end
+                while angle_diff < -math.pi do angle_diff = angle_diff + math.pi * 2 end
+
+                local turn_speed = 0.08 * timeScale
+                if math.abs(angle_diff) > math.pi / 2 then
+                    turn_speed = 0.15 * timeScale
+                end
+
+                if math.abs(angle_diff) > 0.01 then
+                    local rotation = angle_diff > 0 and turn_speed or -turn_speed
+                    if math.abs(rotation) > math.abs(angle_diff) then
+                        rotation = angle_diff
+                    end
+                    cam.yaw = cam.yaw + rotation
+                end
+            end
+
+            -- Gradually return pitch to neutral
+            cam.pitch = cam.pitch + (0 - cam.pitch) * 0.02 * timeScale
+        end
+
+        -- Update mouse position tracking
+        last_mouse_x, last_mouse_y = love.mouse.getPosition()
     end
-    last_mouse_x, last_mouse_y = mouse_x, mouse_y
 
     -- Camera follows ship with smooth lerp (frame-rate independent)
-    -- Target is ship position directly
-    local target_x = ship.x
-    local target_y = ship.y
-    local target_z = ship.z
+    -- Pivot point is the ship position
+    local pivot_x = ship.x
+    local pivot_y = ship.y
+    local pivot_z = ship.z
 
     -- Update camera distance based on ship speed (with smooth lerp)
     local ship_speed = math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy + ship.vz * ship.vz)
@@ -950,6 +1120,10 @@ function flight_scene.update(dt)
     local zoomLerpFactor = 1.0 - math.pow(1.0 - camera_zoom_speed, timeScale)
     cam_dist = cam_dist + (target_cam_dist - cam_dist) * zoomLerpFactor
 
+    -- Camera position: always at the pivot (ship position)
+    -- The cam_dist offset is applied in the view matrix, not in world space
+    local target_x, target_y, target_z = pivot_x, pivot_y, pivot_z
+
     -- Frame-rate independent lerp: 1 - (1-speed)^(dt*60)
     local lerpFactor = 1.0 - math.pow(1.0 - camera_lerp_speed, timeScale)
 
@@ -957,6 +1131,9 @@ function flight_scene.update(dt)
     cam.pos.x = cam.pos.x + (target_x - cam.pos.x) * lerpFactor
     cam.pos.y = cam.pos.y + (target_y - cam.pos.y) * lerpFactor
     cam.pos.z = cam.pos.z + (target_z - cam.pos.z) * lerpFactor
+
+    -- Track previous camera mode for smooth transitions
+    prev_camera_mode = camera_mode
 
     camera_module.updateVectors(cam)
     profile("update")
@@ -980,9 +1157,13 @@ function flight_scene.draw()
     -- Set clear color and clear buffers
     renderer.clearBuffers()
 
-    -- Build view matrix with cam_dist offset (like Picotron)
+    -- Build view matrix
+    -- cam_dist pushes the view backward in camera's local -Z direction
     local viewMatrix = camera_module.getViewMatrix(cam, cam_dist)
     renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+
+    -- Store view matrix for target bracket drawing later
+    flight_scene.viewMatrix = viewMatrix
     profile("clear")
 
     -- Render shadow map BEFORE terrain (terrain shader samples this)
@@ -1112,6 +1293,12 @@ function flight_scene.draw()
         Mission.draw_checkpoints(renderer, Heightmap, cam.pos.x, cam.pos.z)
     end
 
+    -- Draw guide arrow for combat target (when target is selected)
+    local combat_target = HUD.get_target()
+    if combat_target and combat_active then
+        Mission.draw_target_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, combat_target)
+    end
+
     -- Draw wind direction arrow (blue, length based on wind strength)
     Weather.draw_wind_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, ship.y)
 
@@ -1132,7 +1319,9 @@ function flight_scene.draw()
     -- Pass race checkpoints if in race mode
     local race_checkpoints = Mission.race_checkpoints
     local current_checkpoint = Mission.race and Mission.race.current_checkpoint or 1
-    Minimap.draw(renderer, Heightmap, ship, LandingPads, minimap_cargo, minimap_target, race_checkpoints, current_checkpoint)
+    -- Pass enemies if in combat mode
+    local minimap_enemies = combat_active and Aliens.get_all() or nil
+    Minimap.draw(renderer, Heightmap, ship, LandingPads, minimap_cargo, minimap_target, race_checkpoints, current_checkpoint, minimap_enemies)
     profile(" minimap")
 
     -- Draw HUD to software buffer (before blit)
@@ -1170,8 +1359,20 @@ function flight_scene.draw()
         mission_target = Mission.get_target(),
         current_location = nil,  -- TODO: detect current landing pad/building
         is_repairing = is_repairing,
-        race_data = Mission.get_race_data()  -- Race HUD data (nil if not in race)
+        race_data = Mission.get_race_data(),  -- Race HUD data (nil if not in race)
+        camera_mode = camera_mode  -- Current camera mode (follow/free/focus)
     })
+
+    -- Draw combat HUD (targeting, mothership health bar)
+    if combat_active then
+        HUD.draw_combat_hud(Aliens.get_all(), Aliens.mother_ship)
+
+        -- Draw target bracket around selected target
+        local target = HUD.get_target()
+        if target then
+            HUD.draw_target_bracket_3d(target, cam, projMatrix, flight_scene.viewMatrix)
+        end
+    end
 
     -- Draw death screen overlay if ship is destroyed
     if ship_death_mode and ship_death_timer > 1.5 then
@@ -1269,12 +1470,42 @@ function flight_scene.keypressed(key)
             -- Resume game
             HUD.toggle_pause()
             return
+        elseif key == "c" then
+            -- Toggle controls visibility from pause menu
+            HUD.toggle_controls()
+            return
         end
         return  -- Block other keys while paused
     end
 
     -- Let HUD handle its keypresses (tab/escape for pause)
     HUD.keypressed(key)
+
+    -- Handle T key for target cycling in combat mode
+    if key == "t" and combat_active then
+        local enemies = Aliens.get_all()
+        local new_target = HUD.cycle_target(enemies)
+        if new_target then
+            Turret.target = new_target
+        end
+        return
+    end
+
+    -- Handle F key to cycle camera modes (follow -> free -> focus)
+    if key == "f" then
+        if camera_mode == "follow" then
+            camera_mode = "free"
+            print("[CAMERA] Switched to FREE mode")
+        elseif camera_mode == "free" then
+            camera_mode = "focus"
+            print("[CAMERA] Switched to FOCUS mode")
+        else
+            camera_mode = "follow"
+            follow_cam_debug_timer = 4.5  -- Print debug soon after switching
+            print("[CAMERA] Switched to FOLLOW mode")
+        end
+        return
+    end
 
     -- Handle Q key in death mode - quit to menu
     if key == "q" and ship_death_mode then

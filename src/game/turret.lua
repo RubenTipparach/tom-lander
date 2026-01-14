@@ -16,7 +16,7 @@ Turret.MOUNT_OFFSET_Z = 0.0   -- Z offset from ship center
 -- Turret configuration
 Turret.FIRE_ARC = 0.5         -- 180 degrees (half hemisphere)
 Turret.FIRE_RANGE = 20        -- 200 meters (20 units)
-Turret.ROTATION_SPEED = 0.1   -- How fast turret rotates to target
+Turret.ROTATION_SPEED = 0.3   -- How fast turret rotates to target
 Turret.MAX_PITCH = 0.125      -- Max pitch up/down (45 degrees)
 Turret.MAX_YAW = 0.25         -- Max yaw left/right from ship forward
 

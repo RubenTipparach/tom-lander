@@ -96,7 +96,7 @@ function Minimap.world_to_minimap(world_x, world_z, heightmap)
 end
 
 -- Draw the minimap using the software renderer
-function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, mission_target, race_checkpoints, current_checkpoint)
+function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, mission_target, race_checkpoints, current_checkpoint, enemies)
     -- Generate cache on first draw
     if not terrain_cache and heightmap then
         Minimap.generate_terrain_cache(heightmap)
@@ -222,6 +222,28 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
             renderer.drawPixel(math.floor(cx + 1), math.floor(cy), r, g, b)
             renderer.drawPixel(math.floor(cx), math.floor(cy - 1), r, g, b)
             renderer.drawPixel(math.floor(cx), math.floor(cy + 1), r, g, b)
+        end
+    end
+
+    -- Draw enemies (red blinking dots)
+    if enemies then
+        local blink = (love.timer.getTime() * 3) % 1 < 0.7  -- Fast blink, mostly on
+        if blink then
+            for _, enemy in ipairs(enemies) do
+                local ex = Minimap.X + Minimap.SIZE / 2 + enemy.x * pixels_per_world_unit
+                local ey = Minimap.Y + Minimap.SIZE / 2 + enemy.z * pixels_per_world_unit
+
+                -- Check bounds
+                if ex >= Minimap.X and ex <= Minimap.X + Minimap.SIZE and
+                   ey >= Minimap.Y and ey <= Minimap.Y + Minimap.SIZE then
+                    -- 2x2 red square
+                    for dy = -1, 0 do
+                        for dx = -1, 0 do
+                            renderer.drawPixel(math.floor(ex + dx), math.floor(ey + dy), 255, 50, 50)
+                        end
+                    end
+                end
+            end
         end
     end
 

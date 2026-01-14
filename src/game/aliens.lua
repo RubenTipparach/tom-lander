@@ -36,11 +36,13 @@ Aliens.FIGHTER_MAX_BANK = 0.083  -- Max bank angle (30 degrees)
 Aliens.FIGHTER_BANK_DAMPING = 0.9
 
 -- Mother ship behavior
-Aliens.MOTHER_SHIP_FIRE_RATE = 1  -- Bullets per second
-Aliens.MOTHER_SHIP_FIRE_RANGE = 25
-Aliens.MOTHER_SHIP_HOVER_HEIGHT = 10
-Aliens.MOTHER_SHIP_MAX_HEIGHT = 30
+Aliens.MOTHER_SHIP_FIRE_RATE = 4  -- Bullets per second (increased for bullet hell)
+Aliens.MOTHER_SHIP_FIRE_RANGE = 40
+Aliens.MOTHER_SHIP_HOVER_HEIGHT = 15
+Aliens.MOTHER_SHIP_MAX_HEIGHT = 35
 Aliens.MOTHER_SHIP_DESCEND_SPEED = -0.1
+Aliens.MOTHER_SHIP_SCALE = 2.0    -- Scale multiplier for mother ship
+Aliens.MOTHER_SHIP_COLLISION_RADIUS = 4.0  -- Collision radius for mother ship
 
 -- Wave configuration
 Aliens.waves = {
@@ -320,23 +322,30 @@ function Aliens.update_fighter(fighter, dt, player, player_on_pad)
     fighter.y = fighter.y + fighter.vy * dt
     fighter.z = fighter.z + fighter.vz * dt
 
-    -- Rotate to face velocity
-    local new_yaw = math.atan2(fighter.vx, fighter.vz)
+    -- Rotate to face velocity direction
+    local speed_sq = fighter.vx * fighter.vx + fighter.vz * fighter.vz
+    if speed_sq > 0.01 then  -- Only update yaw when moving
+        local new_yaw = math.atan2(fighter.vx, fighter.vz)
 
-    -- Calculate banking
-    local yaw_change = new_yaw - fighter.prev_yaw
-    while yaw_change > math.pi do yaw_change = yaw_change - math.pi * 2 end
-    while yaw_change < -math.pi do yaw_change = yaw_change + math.pi * 2 end
+        -- Calculate banking based on yaw change rate
+        local yaw_change = new_yaw - fighter.prev_yaw
+        while yaw_change > math.pi do yaw_change = yaw_change - math.pi * 2 end
+        while yaw_change < -math.pi do yaw_change = yaw_change + math.pi * 2 end
 
-    fighter.roll = -yaw_change * Aliens.FIGHTER_BANK_MULTIPLIER
-    fighter.roll = math.max(-Aliens.FIGHTER_MAX_BANK * math.pi * 2, math.min(Aliens.FIGHTER_MAX_BANK * math.pi * 2, fighter.roll))
+        -- Target roll based on turn rate (limited)
+        local target_roll = -yaw_change * Aliens.FIGHTER_BANK_MULTIPLIER
+        local max_roll = Aliens.FIGHTER_MAX_BANK * math.pi * 2  -- ~30 degrees
+        target_roll = math.max(-max_roll, math.min(max_roll, target_roll))
 
-    if math.abs(yaw_change) < 0.01 then
-        fighter.roll = fighter.roll * Aliens.FIGHTER_BANK_DAMPING
+        -- Smoothly lerp toward target roll
+        fighter.roll = fighter.roll + (target_roll - fighter.roll) * 0.1
+
+        fighter.prev_yaw = fighter.yaw
+        fighter.yaw = new_yaw
+    else
+        -- Not moving - decay roll to 0
+        fighter.roll = fighter.roll * 0.9
     end
-
-    fighter.prev_yaw = fighter.yaw
-    fighter.yaw = new_yaw
 
     -- Shoot at player
     fighter.fire_timer = fighter.fire_timer + dt
@@ -377,7 +386,10 @@ function Aliens.update_mother_ship(mother, dt, player, player_on_pad)
     -- Rotate slowly
     mother.yaw = mother.yaw + dt * 0.2
 
-    -- Shoot at player
+    -- Update spiral angle for bullet hell pattern
+    mother.fire_angle = (mother.fire_angle or 0) + dt * 3  -- Rotate bullet spawn angle
+
+    -- Shoot at player with bullet hell pattern
     mother.fire_timer = mother.fire_timer + dt
 
     local dx = player.x - mother.x
@@ -386,27 +398,32 @@ function Aliens.update_mother_ship(mother, dt, player, player_on_pad)
     local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
 
     if not player_on_pad and dist <= Aliens.MOTHER_SHIP_FIRE_RANGE then
-        local to_player_x = dx / dist
-        local to_player_y = dy / dist
-        local to_player_z = dz / dist
-
         -- Check if player is below (dot product with down vector)
+        local to_player_y = dy / dist
         local dot = to_player_y * (-1)
 
         if dot > 0 and mother.fire_timer >= (1 / Aliens.MOTHER_SHIP_FIRE_RATE) then
             if Aliens.spawn_bullet then
-                -- Two bullets with spread
-                local spread = 0.1
-                Aliens.spawn_bullet(
-                    mother.x - spread, mother.y, mother.z,
-                    to_player_x, to_player_y, to_player_z,
-                    Aliens.MOTHER_SHIP_FIRE_RANGE
-                )
-                Aliens.spawn_bullet(
-                    mother.x + spread, mother.y, mother.z,
-                    to_player_x, to_player_y, to_player_z,
-                    Aliens.MOTHER_SHIP_FIRE_RANGE
-                )
+                -- Bullet hell pattern: spiral of bullets
+                local num_bullets = 4  -- 4 bullets per burst in spiral pattern
+                for i = 0, num_bullets - 1 do
+                    local angle = mother.fire_angle + (i / num_bullets) * math.pi * 2
+                    local spread = 0.3  -- Spread from vertical
+                    local dir_x = math.sin(angle) * spread
+                    local dir_z = math.cos(angle) * spread
+                    local dir_y = -math.sqrt(1 - spread * spread)  -- Mostly downward
+
+                    -- Spawn from edges of the ship
+                    local spawn_offset = 2.0  -- Offset from center
+                    local spawn_x = mother.x + math.sin(angle) * spawn_offset
+                    local spawn_z = mother.z + math.cos(angle) * spawn_offset
+
+                    Aliens.spawn_bullet(
+                        spawn_x, mother.y - 1, spawn_z,
+                        dir_x, dir_y, dir_z,
+                        Aliens.MOTHER_SHIP_FIRE_RANGE
+                    )
+                end
             end
             mother.fire_timer = 0
         end
@@ -439,9 +456,9 @@ function Aliens.draw(renderer)
         Aliens.draw_alien(renderer, fighter, Aliens.fighter_mesh, fighter_tex, 1.0)
     end
 
-    -- Draw mother ship
+    -- Draw mother ship (2x scale)
     if Aliens.mother_ship then
-        Aliens.draw_alien(renderer, Aliens.mother_ship, Aliens.mother_mesh, mother_tex, 1.0)
+        Aliens.draw_alien(renderer, Aliens.mother_ship, Aliens.mother_mesh, mother_tex, Aliens.MOTHER_SHIP_SCALE)
     end
 end
 
@@ -451,8 +468,12 @@ function Aliens.draw_alien(renderer, alien, mesh, texData, scale)
     if not mesh.triangles or #mesh.triangles == 0 then return end
 
     -- Build model matrix with yaw and roll (for fighters)
+    -- Model faces +Z by default, yaw rotates around Y axis
+    -- Roll should be applied around the local forward axis (after yaw)
     local yawQ = quat.fromAxisAngle(0, 1, 0, alien.yaw)
+    -- Apply roll in local space: multiply roll FIRST then yaw (right-to-left order)
     local rollQ = quat.fromAxisAngle(0, 0, 1, alien.roll or 0)
+    -- This order: first roll (local Z), then yaw (world Y)
     local orientation = quat.multiply(yawQ, rollQ)
 
     local scaleMatrix = mat4.scale(scale, scale, scale)

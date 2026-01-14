@@ -585,6 +585,84 @@ function Mission.draw_guide_arrow(renderer, cam_x, cam_y, cam_z)
     )
 end
 
+-- Draw 3D guide arrow for combat target (no mission active check)
+function Mission.draw_target_arrow(renderer, cam_x, cam_y, cam_z, target)
+    if not target then return end
+
+    local target_x = target.x
+    local target_z = target.z
+
+    -- Calculate direction to target from camera pivot
+    local dx = target_x - cam_x
+    local dz = target_z - cam_z
+    local dist = math.sqrt(dx * dx + dz * dz)
+
+    -- Don't draw if very close to target
+    if dist < config.GUIDE_ARROW_MIN_TARGET_DIST then return end
+
+    -- Normalize direction
+    local dir_x = dx / dist
+    local dir_z = dz / dist
+
+    -- Pulsating effect
+    local time = love.timer.getTime()
+    local pulse_range = config.GUIDE_ARROW_PULSE_MAX - config.GUIDE_ARROW_PULSE_MIN
+    local pulse = config.GUIDE_ARROW_PULSE_MIN + pulse_range * (0.5 + 0.5 * math.sin(time * config.GUIDE_ARROW_PULSE_SPEED))
+
+    -- Arrow parameters with pulse
+    local arrow_height = cam_y + config.GUIDE_ARROW_Y_OFFSET
+    local arrow_length = config.GUIDE_ARROW_LENGTH * pulse
+    local arrow_width = config.GUIDE_ARROW_WIDTH * pulse
+    local skip_depth = not config.GUIDE_ARROW_DEPTH_TEST
+
+    -- Arrow center position
+    local center_x = cam_x + dir_x * config.GUIDE_ARROW_DISTANCE
+    local center_z = cam_z + dir_z * config.GUIDE_ARROW_DISTANCE
+
+    -- Perpendicular direction for arrow width
+    local perp_x = -dir_z
+    local perp_z = dir_x
+
+    -- Arrow tip
+    local tip_x = center_x + dir_x * arrow_length
+    local tip_z = center_z + dir_z * arrow_length
+
+    -- Arrow back
+    local back_x = center_x - dir_x * (arrow_length * 0.3)
+    local back_z = center_z - dir_z * (arrow_length * 0.3)
+
+    -- Wing points
+    local wing_left_x = back_x + perp_x * arrow_width
+    local wing_left_z = back_z + perp_z * arrow_width
+    local wing_right_x = back_x - perp_x * arrow_width
+    local wing_right_z = back_z - perp_z * arrow_width
+
+    -- Red color for combat targets (pulsating)
+    local brightness = 0.7 + 0.3 * math.sin(time * config.GUIDE_ARROW_COLOR_SPEED)
+    local r = math.floor(255 * brightness)
+    local g = math.floor(80 * brightness)
+    local b = math.floor(80 * brightness)
+
+    -- Draw chevron/arrow shape
+    renderer.drawLine3D({tip_x, arrow_height, tip_z}, {wing_left_x, arrow_height, wing_left_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({tip_x, arrow_height, tip_z}, {wing_right_x, arrow_height, wing_right_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({wing_left_x, arrow_height, wing_left_z}, {center_x, arrow_height, center_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({wing_right_x, arrow_height, wing_right_z}, {center_x, arrow_height, center_z}, r, g, b, skip_depth)
+
+    -- Second layer for 3D effect
+    local h2 = arrow_height + config.GUIDE_ARROW_HEIGHT
+    renderer.drawLine3D({tip_x, h2, tip_z}, {wing_left_x, h2, wing_left_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({tip_x, h2, tip_z}, {wing_right_x, h2, wing_right_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({wing_left_x, h2, wing_left_z}, {center_x, h2, center_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({wing_right_x, h2, wing_right_z}, {center_x, h2, center_z}, r, g, b, skip_depth)
+
+    -- Vertical connectors
+    renderer.drawLine3D({tip_x, arrow_height, tip_z}, {tip_x, h2, tip_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({wing_left_x, arrow_height, wing_left_z}, {wing_left_x, h2, wing_left_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({wing_right_x, arrow_height, wing_right_z}, {wing_right_x, h2, wing_right_z}, r, g, b, skip_depth)
+    renderer.drawLine3D({center_x, arrow_height, center_z}, {center_x, h2, center_z}, r, g, b, skip_depth)
+end
+
 -- Draw 3D checkpoint markers for race mission
 function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
     if Mission.type ~= "race" or not Mission.race_checkpoints then return end

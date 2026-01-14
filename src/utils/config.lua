@@ -35,7 +35,7 @@ config.SET_CLEAR_COLOR = false  -- Set to true to call setClearColor in flight_s
 -- DEBUG / DEV SETTINGS
 -- ===========================================
 config.UNLOCK_ALL_MISSIONS = true  -- Set to true to unlock all missions (dev mode)
-config.COMBAT_DEBUG = true         -- Set to true to show combat debug visuals (bounding boxes, velocity, target lines)
+config.COMBAT_DEBUG = false        -- Set to true to show combat debug visuals (bounding boxes, velocity, target lines)
 
 -- ===========================================
 -- RENDER SETTINGS

@@ -212,8 +212,9 @@ end
 
 -- Draw control hints
 function HUD.draw_controls(game_mode)
-    -- Only show if enabled or in mission 1
-    if not show_controls and current_mission ~= 1 then
+    -- Only show controls in tutorial mission (mission 1) or when explicitly toggled
+    -- Outside tutorial, controls are hidden by default and shown via pause menu
+    if current_mission ~= 1 and not show_controls then
         return
     end
 
@@ -320,7 +321,7 @@ function HUD.draw_pause_menu()
     local screen_w = 480
     local screen_h = 270
     local box_width = 180
-    local box_height = 70
+    local box_height = 85
     local box_x = (screen_w - box_width) / 2
     local box_y = (screen_h - box_height) / 2
 
@@ -345,12 +346,17 @@ function HUD.draw_pause_menu()
     -- Options
     local option1 = "[Tab] Resume"
     local option1_x = box_x + (box_width - #option1 * 5) / 2
-    renderer.drawText(option1_x, box_y + 30, option1,
+    renderer.drawText(option1_x, box_y + 28, option1,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
 
-    local option2 = "[Q] Return to Menu"
+    local option2 = "[C] " .. (show_controls and "Hide" or "Show") .. " Controls"
     local option2_x = box_x + (box_width - #option2 * 5) / 2
-    renderer.drawText(option2_x, box_y + 45, option2,
+    renderer.drawText(option2_x, box_y + 43, option2,
+                      COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+
+    local option3 = "[Q] Return to Menu"
+    local option3_x = box_x + (box_width - #option3 * 5) / 2
+    renderer.drawText(option3_x, box_y + 58, option3,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
 end
 
@@ -620,8 +626,199 @@ function HUD.draw(ship, camera, opts)
         HUD.draw_thruster_indicator(ship)
     end
 
+    -- Draw camera mode indicator (bottom right, above target hint)
+    if opts.camera_mode and not show_pause_menu then
+        HUD.draw_camera_mode(opts.camera_mode)
+    end
+
     -- Draw pause menu on top of everything
     HUD.draw_pause_menu()
+end
+
+-- Draw camera mode indicator
+function HUD.draw_camera_mode(mode)
+    local screen_w = config.RENDER_WIDTH
+    local screen_h = config.RENDER_HEIGHT
+
+    local mode_text = "[F] CAM: " .. string.upper(mode)
+    local text_x = screen_w - #mode_text * 6 - 10
+    local text_y = screen_h - 45
+
+    -- Color based on mode
+    local color = COLOR_GREY
+    if mode == "follow" then
+        color = COLOR_GREEN
+    elseif mode == "free" then
+        color = COLOR_CYAN
+    elseif mode == "focus" then
+        color = COLOR_YELLOW
+    end
+
+    renderer.drawText(text_x, text_y, mode_text, color[1], color[2], color[3], 1, true)
+end
+
+-- Targeting system state
+local current_target_index = 0
+local current_target = nil
+
+-- Cycle to next target in list
+function HUD.cycle_target(enemies)
+    if not enemies or #enemies == 0 then
+        current_target_index = 0
+        current_target = nil
+        return nil
+    end
+
+    current_target_index = current_target_index + 1
+    if current_target_index > #enemies then
+        current_target_index = 1
+    end
+
+    current_target = enemies[current_target_index]
+    return current_target
+end
+
+-- Get current target
+function HUD.get_target()
+    return current_target
+end
+
+-- Set target directly (e.g., from turret auto-acquire)
+function HUD.set_target(target)
+    current_target = target
+end
+
+-- Reset targeting
+function HUD.reset_targeting()
+    current_target_index = 0
+    current_target = nil
+end
+
+-- Draw target bracket (4 corner brackets around target) in 3D space
+-- Called from flight_scene after 3D rendering
+function HUD.draw_target_bracket_3d(target, cam, projMatrix, viewMatrix)
+    if not target or not renderer then return end
+
+    local target_x = target.x
+    local target_y = (target.y or 0) + 1  -- Slightly above target center
+    local target_z = target.z
+
+    -- Transform through view matrix (world to view space)
+    local view = mat4.multiplyVec4(viewMatrix, {target_x, target_y, target_z, 1})
+
+    -- Transform through projection matrix (view to clip space)
+    local clip = mat4.multiplyVec4(projMatrix, {view[1], view[2], view[3], view[4]})
+
+    -- Behind camera check
+    if clip[4] <= 0 then return end
+
+    -- Perspective divide to NDC
+    local ndc_x = clip[1] / clip[4]
+    local ndc_y = clip[2] / clip[4]
+
+    -- NDC to screen space
+    local screen_x = (ndc_x + 1) * 0.5 * config.RENDER_WIDTH
+    local screen_y = (1 - ndc_y) * 0.5 * config.RENDER_HEIGHT  -- Flip Y
+
+    -- Calculate bracket size based on distance (smaller when far)
+    local dist = math.sqrt(view[1]*view[1] + view[2]*view[2] + view[3]*view[3])
+    local base_size = 30
+    local bracket_size = math.max(15, math.min(50, base_size * 3 / dist))
+    local bracket_length = bracket_size * 0.4
+    local half_size = bracket_size
+
+    -- Pulsing effect
+    local time = love.timer.getTime()
+    local pulse = 0.8 + 0.2 * math.sin(time * 6)
+    local g = math.floor(255 * pulse)
+    local r = math.floor(100 * pulse)
+    local b = math.floor(50 * pulse)
+
+    -- Draw 4 corner brackets (green)
+    -- Top-left corner
+    renderer.drawLine2D(screen_x - half_size, screen_y - half_size,
+                      screen_x - half_size + bracket_length, screen_y - half_size, r, g, b)
+    renderer.drawLine2D(screen_x - half_size, screen_y - half_size,
+                      screen_x - half_size, screen_y - half_size + bracket_length, r, g, b)
+
+    -- Top-right corner
+    renderer.drawLine2D(screen_x + half_size, screen_y - half_size,
+                      screen_x + half_size - bracket_length, screen_y - half_size, r, g, b)
+    renderer.drawLine2D(screen_x + half_size, screen_y - half_size,
+                      screen_x + half_size, screen_y - half_size + bracket_length, r, g, b)
+
+    -- Bottom-left corner
+    renderer.drawLine2D(screen_x - half_size, screen_y + half_size,
+                      screen_x - half_size + bracket_length, screen_y + half_size, r, g, b)
+    renderer.drawLine2D(screen_x - half_size, screen_y + half_size,
+                      screen_x - half_size, screen_y + half_size - bracket_length, r, g, b)
+
+    -- Bottom-right corner
+    renderer.drawLine2D(screen_x + half_size, screen_y + half_size,
+                      screen_x + half_size - bracket_length, screen_y + half_size, r, g, b)
+    renderer.drawLine2D(screen_x + half_size, screen_y + half_size,
+                      screen_x + half_size, screen_y + half_size - bracket_length, r, g, b)
+end
+
+-- Draw combat HUD (target indicator, enemy health bar)
+function HUD.draw_combat_hud(enemies, mother_ship)
+    local screen_w = config.RENDER_WIDTH
+    local screen_h = config.RENDER_HEIGHT
+
+    -- Draw mothership health bar if present
+    if mother_ship then
+        local bar_width = 200
+        local bar_height = 16
+        local bar_x = (screen_w - bar_width) / 2
+        local bar_y = 30
+
+        local health_percent = mother_ship.health / mother_ship.max_health
+        health_percent = math.max(0, math.min(1, health_percent))
+
+        -- Health bar color
+        local health_color = COLOR_RED
+        if health_percent > 0.5 then
+            health_color = COLOR_GREEN
+        elseif health_percent > 0.25 then
+            health_color = COLOR_ORANGE
+        end
+
+        -- Background
+        renderer.drawRectFill(bar_x - 2, bar_y - 2, bar_x + bar_width + 2, bar_y + bar_height + 2,
+                              COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3])
+
+        -- Health fill
+        local fill_width = bar_width * health_percent
+        if fill_width > 0 then
+            renderer.drawRectFill(bar_x, bar_y, bar_x + fill_width, bar_y + bar_height,
+                                  health_color[1], health_color[2], health_color[3])
+        end
+
+        -- Border
+        renderer.drawRect(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height,
+                          COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3])
+
+        -- Label
+        local label = "MOTHERSHIP"
+        local label_x = (screen_w - #label * 6) / 2
+        renderer.drawText(label_x, bar_y + 3, label,
+                          COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
+    end
+
+    -- Draw target hint on right side
+    local hint_text = "[T] Target"
+    local hint_x = screen_w - #hint_text * 6 - 10
+    local hint_y = screen_h - 30
+    renderer.drawText(hint_x, hint_y, hint_text,
+                      COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+
+    -- Show current target info
+    if current_target then
+        local target_text = "TARGET: " .. (current_target.type or "enemy")
+        local target_x = screen_w - #target_text * 6 - 10
+        renderer.drawText(target_x, hint_y - 12, target_text,
+                          COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
+    end
 end
 
 -- Handle keypresses
