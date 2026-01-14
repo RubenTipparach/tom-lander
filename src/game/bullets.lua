@@ -63,7 +63,8 @@ function Bullets.spawn_enemy_bullet(x, y, z, dir_x, dir_y, dir_z, max_range)
 end
 
 -- Update all bullets
-function Bullets.update(dt)
+-- world_objects: {heightmap, trees, buildings} for collision detection
+function Bullets.update(dt, world_objects)
     -- Update player fire cooldown
     if Bullets.player_fire_timer > 0 then
         Bullets.player_fire_timer = Bullets.player_fire_timer - dt
@@ -88,7 +89,53 @@ function Bullets.update(dt)
             local dz = bullet.z - bullet.start_z
             local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-            if dist > bullet.max_range then
+            local hit_obstacle = false
+
+            -- Check collision with world objects
+            if world_objects then
+                -- Terrain collision
+                if world_objects.heightmap then
+                    local ground_height = world_objects.heightmap.get_height(bullet.x, bullet.z)
+                    if bullet.y <= ground_height then
+                        hit_obstacle = true
+                    end
+                end
+
+                -- Tree collision
+                if not hit_obstacle and world_objects.trees then
+                    local all_trees = world_objects.trees.get_all()
+                    for _, tree in ipairs(all_trees) do
+                        local tree_radius = 0.55
+                        local tree_height = 2.0
+                        local tdx = bullet.x - tree.x
+                        local tdz = bullet.z - tree.z
+                        local dist_xz = math.sqrt(tdx * tdx + tdz * tdz)
+
+                        if dist_xz < tree_radius and bullet.y < tree.y + tree_height and bullet.y > tree.y then
+                            hit_obstacle = true
+                            break
+                        end
+                    end
+                end
+
+                -- Building collision
+                if not hit_obstacle and world_objects.buildings then
+                    for _, building in ipairs(world_objects.buildings) do
+                        local half_width = building.width / 2
+                        local half_depth = building.depth / 2
+                        local building_top = building.y + building.height
+
+                        if bullet.x > building.x - half_width and bullet.x < building.x + half_width and
+                           bullet.z > building.z - half_depth and bullet.z < building.z + half_depth and
+                           bullet.y > building.y and bullet.y < building_top then
+                            hit_obstacle = true
+                            break
+                        end
+                    end
+                end
+            end
+
+            if dist > bullet.max_range or hit_obstacle then
                 table.remove(Bullets.bullets, i)
             end
         else

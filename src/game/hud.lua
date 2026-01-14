@@ -694,6 +694,43 @@ function HUD.reset_targeting()
     current_target = nil
 end
 
+-- Validate current target against active enemies list
+-- If target is no longer in the list, select next available or clear
+function HUD.validate_target(enemies)
+    if not current_target then return end
+
+    -- Check if current target is still in the enemies list
+    local target_valid = false
+    local target_new_index = 0
+
+    for i, enemy in ipairs(enemies) do
+        if enemy == current_target then
+            target_valid = true
+            target_new_index = i
+            break
+        end
+    end
+
+    if target_valid then
+        -- Update index in case list order changed
+        current_target_index = target_new_index
+    else
+        -- Target destroyed - select next available or clear
+        if #enemies > 0 then
+            -- Wrap index to valid range and select next target
+            current_target_index = math.min(current_target_index, #enemies)
+            if current_target_index < 1 then current_target_index = 1 end
+            current_target = enemies[current_target_index]
+        else
+            -- No enemies left
+            current_target_index = 0
+            current_target = nil
+        end
+    end
+
+    return current_target
+end
+
 -- Draw target bracket (4 corner brackets around target) in 3D space
 -- Called from flight_scene after 3D rendering
 function HUD.draw_target_bracket_3d(target, cam, projMatrix, viewMatrix)

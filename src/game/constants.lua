@@ -15,6 +15,7 @@ Constants.SPRITE_SHIP = 9
 Constants.SPRITE_SHIP_DAMAGE = 10
 Constants.SPRITE_SKYBOX = 11
 Constants.SPRITE_SKYBOX_OVERCAST = 23  -- Cloudy/overcast sky for weather
+Constants.SPRITE_SKYBOX_SUNSET = 29    -- Sunset sky for alien mission (shared with Picotron)
 Constants.SPRITE_WATER = 12
 Constants.SPRITE_WATER2 = 13
 Constants.SPRITE_GRASS = 15  -- Grass texture for elevation 3+ (32x32)
@@ -30,7 +31,7 @@ Constants.SPRITE_BULLET_PLAYER = 25  -- Player bullet texture (16x16)
 Constants.SPRITE_BULLET_ENEMY = 26  -- Enemy bullet texture (16x16)
 Constants.SPRITE_UFO_FIGHTER = 28  -- UFO fighter alien texture (32x32)
 Constants.SPRITE_UFO_MOTHER = 27  -- Mother ship texture (128x128)
-Constants.SPRITE_EXPLOSION = 29  -- Explosion effect texture (32x32)
+Constants.SPRITE_EXPLOSION = "explosion_1"  -- Explosion effect texture (named asset)
 Constants.SPRITE_HEIGHTMAP = 64  -- Heightmap data source (128x128)
 
 -- Landing pad names
@@ -73,10 +74,16 @@ Constants.BUILDING_NAMES = {
 Constants.textureCache = {}
 Constants.textureDataCache = {}
 
--- Load a texture by sprite index
+-- Load a texture by sprite index or name
+-- index: number for textures/[index].png, string for assets/[name].png
 function Constants.getTexture(index)
     if not Constants.textureCache[index] then
-        local path = "assets/textures/" .. index .. ".png"
+        local path
+        if type(index) == "string" then
+            path = "assets/" .. index .. ".png"
+        else
+            path = "assets/textures/" .. index .. ".png"
+        end
         local success, result = pcall(function()
             return love.graphics.newImage(path)
         end)
@@ -90,10 +97,16 @@ function Constants.getTexture(index)
     return Constants.textureCache[index]
 end
 
--- Load texture data (ImageData) by sprite index for software rendering
+-- Load texture data (ImageData) by sprite index or name for software rendering
+-- index: number for textures/[index].png, string for assets/[name].png
 function Constants.getTextureData(index)
     if not Constants.textureDataCache[index] then
-        local path = "assets/textures/" .. index .. ".png"
+        local path
+        if type(index) == "string" then
+            path = "assets/" .. index .. ".png"
+        else
+            path = "assets/textures/" .. index .. ".png"
+        end
         local success, result = pcall(function()
             return love.image.newImageData(path)
         end)

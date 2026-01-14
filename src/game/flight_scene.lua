@@ -70,9 +70,10 @@ local game_mode = "arcade"  -- "arcade" or "simulation"
 local current_mission_num = nil  -- nil = free flight
 local current_track_num = nil  -- Track number for racing mode
 
--- Combat state (Mission 6)
+-- Combat state (Mission 7)
 local combat_active = false
 local wave_start_delay = 0  -- Delay before starting next wave
+local weapons_enabled = true  -- Toggle with T key
 
 -- Race victory state
 local race_victory_mode = false
@@ -865,14 +866,25 @@ function flight_scene.update(dt)
 
         -- Update aliens (pass landing pad status for safe zones)
         local player_on_pad = LandingPads.check_landing(ship.x, ship.y, ship.z, ship.vy) ~= nil
-        Aliens.update(dt, ship, player_on_pad)
+        -- Pass world objects for collision detection
+        local world_objects = {
+            heightmap = Heightmap,
+            trees = Trees,
+            buildings = buildings
+        }
+        Aliens.update(dt, ship, player_on_pad, world_objects)
+
+        -- Validate current target (auto-select next if destroyed)
+        local enemies = Aliens.get_all()
+        local validated_target = HUD.validate_target(enemies)
+        -- Sync turret target with HUD target
+        Turret.target = validated_target
 
         -- Update turret (auto-aims at enemies)
-        local enemies = Aliens.get_all()
         Turret.update(dt, ship, enemies)
 
-        -- Auto-fire turret when target acquired
-        if Turret.can_fire() and Turret.target then
+        -- Auto-fire turret when target acquired (and weapons enabled)
+        if weapons_enabled and Turret.can_fire() and Turret.target then
             local dir_x, dir_y, dir_z = Turret.get_fire_direction(ship)
             if dir_x then
                 local turret_x, turret_y, turret_z = Turret.get_position(ship)
@@ -880,8 +892,8 @@ function flight_scene.update(dt)
             end
         end
 
-        -- Update bullets
-        Bullets.update(dt)
+        -- Update bullets (with world collision)
+        Bullets.update(dt, world_objects)
 
         -- Check player bullet hits on aliens
         for _, fighter in ipairs(Aliens.fighters) do
@@ -951,20 +963,22 @@ function flight_scene.update(dt)
         end
         last_mouse_x, last_mouse_y = mouse_x, mouse_y
 
-        -- Debug print every 5 seconds
-        follow_cam_debug_timer = follow_cam_debug_timer + dt
-        if follow_cam_debug_timer >= 5 then
-            follow_cam_debug_timer = 0
-            -- Use camera module's forward vector (updated by updateVectors)
-            camera_module.updateVectors(cam)
-            local horiz_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
-            print("=== FREE CAMERA DEBUG ===")
-            print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
-            print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
-            print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam.forward.x, cam.forward.y, cam.forward.z))
-            print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
-                ship.vx, ship.vy, ship.vz, horiz_speed))
-            print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+        -- Debug print every 5 seconds (if enabled)
+        if config.CAMERA_DEBUG then
+            follow_cam_debug_timer = follow_cam_debug_timer + dt
+            if follow_cam_debug_timer >= 5 then
+                follow_cam_debug_timer = 0
+                -- Use camera module's forward vector (updated by updateVectors)
+                camera_module.updateVectors(cam)
+                local horiz_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
+                print("=== FREE CAMERA DEBUG ===")
+                print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
+                print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
+                print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam.forward.x, cam.forward.y, cam.forward.z))
+                print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
+                    ship.vx, ship.vy, ship.vz, horiz_speed))
+                print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+            end
         end
 
     elseif camera_mode == "follow" then
@@ -1029,17 +1043,19 @@ function flight_scene.update(dt)
         cam.yaw = math.atan2(cam_fwd_x, cam_fwd_z)
         cam.pitch = math.asin(math.max(-1, math.min(1, -cam_fwd_y)))
 
-        -- Debug print every 5 seconds
-        follow_cam_debug_timer = follow_cam_debug_timer + dt
-        if follow_cam_debug_timer >= 5 then
-            follow_cam_debug_timer = 0
-            print("=== FOLLOW CAMERA DEBUG ===")
-            print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
-            print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
-            print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam_fwd_x, cam_fwd_y, cam_fwd_z))
-            print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
-                ship.vx, ship.vy, ship.vz, horizontal_speed))
-            print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+        -- Debug print every 5 seconds (if enabled)
+        if config.CAMERA_DEBUG then
+            follow_cam_debug_timer = follow_cam_debug_timer + dt
+            if follow_cam_debug_timer >= 5 then
+                follow_cam_debug_timer = 0
+                print("=== FOLLOW CAMERA DEBUG ===")
+                print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
+                print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
+                print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam_fwd_x, cam_fwd_y, cam_fwd_z))
+                print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
+                    ship.vx, ship.vy, ship.vz, horizontal_speed))
+                print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+            end
         end
 
         -- Update mouse position tracking
@@ -1218,9 +1234,15 @@ function flight_scene.draw()
     end
 
     -- Draw skydome FIRST (always behind everything, follows camera)
-    -- Use overcast sky texture during weather
+    -- Select sky type based on mission: sunset for Mission 7, overcast for weather, normal otherwise
     profile(" skydome")
-    Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, Weather.is_enabled())
+    local sky_type = "normal"
+    if Mission.current_mission_num == 7 then
+        sky_type = "sunset"
+    elseif Weather.is_enabled() then
+        sky_type = "overcast"
+    end
+    Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, sky_type)
     profile(" skydome")
 
     -- Draw terrain (pass camera yaw for frustum culling)
@@ -1288,15 +1310,19 @@ function flight_scene.draw()
 
     -- Draw 3D guide arrow for missions (anchored to camera pivot, depth tested against geometry)
     if Mission.is_active() then
-        Mission.draw_guide_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+        -- For combat mode (Mission 7): only draw arrow if there's a selected target
+        -- For other missions: draw normal guide arrow
+        if combat_active then
+            local combat_target = HUD.get_target()
+            if combat_target then
+                Mission.draw_target_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, combat_target)
+            end
+            -- No arrow if no target selected in combat mode
+        else
+            Mission.draw_guide_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+        end
         -- Draw 3D checkpoint markers for race mode
         Mission.draw_checkpoints(renderer, Heightmap, cam.pos.x, cam.pos.z)
-    end
-
-    -- Draw guide arrow for combat target (when target is selected)
-    local combat_target = HUD.get_target()
-    if combat_target and combat_active then
-        Mission.draw_target_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, combat_target)
     end
 
     -- Draw wind direction arrow (blue, length based on wind strength)
@@ -1480,6 +1506,13 @@ function flight_scene.keypressed(key)
 
     -- Let HUD handle its keypresses (tab/escape for pause)
     HUD.keypressed(key)
+
+    -- Handle G key to toggle weapons on/off in combat mode
+    if key == "g" and combat_active then
+        weapons_enabled = not weapons_enabled
+        print("[WEAPONS] " .. (weapons_enabled and "ENABLED" or "DISABLED"))
+        return
+    end
 
     -- Handle T key for target cycling in combat mode
     if key == "t" and combat_active then

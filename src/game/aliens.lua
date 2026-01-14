@@ -6,6 +6,7 @@ local mat4 = require("mat4")
 local obj_loader = require("obj_loader")
 local Constants = require("constants")
 local config = require("config")
+local Collision = require("collision")
 
 local Aliens = {}
 
@@ -17,23 +18,19 @@ Aliens.FIGHTER_FIRE_RATE = 2  -- Bullets per second
 Aliens.FIGHTER_FIRE_ARC = 0.125  -- 45 degrees
 Aliens.FIGHTER_FIRE_RANGE = 15  -- Units
 
--- Fighter AI behavior
-Aliens.FIGHTER_ENGAGE_DIST = 10   -- Get close (100 meters)
-Aliens.FIGHTER_RETREAT_DIST = 20  -- Retreat distance (200 meters)
-Aliens.FIGHTER_ENGAGE_TIME = 10   -- Seconds to circle close
-Aliens.FIGHTER_RETREAT_TIME = 15  -- Seconds to stay far
-Aliens.FIGHTER_STATE_TIME_VARIANCE = 5  -- +/- seconds randomization
-Aliens.FIGHTER_CIRCLE_SPEED = 0.3  -- Rotation speed when circling
-Aliens.FIGHTER_CIRCLE_RADIUS = 10  -- Circle radius in units
-Aliens.FIGHTER_CIRCLE_HEIGHT_OFFSET = 2  -- Height above player
-Aliens.FIGHTER_APPROACH_THRESHOLD = 2  -- Distance threshold
-Aliens.FIGHTER_MIN_ALTITUDE = 3  -- Minimum altitude (30 meters - closer to player)
-Aliens.FIGHTER_MAX_ALTITUDE = 20  -- Maximum altitude (200 meters)
-Aliens.FIGHTER_ALTITUDE_CLIMB_SPEED = 0.5
-Aliens.FIGHTER_ALTITUDE_DESCEND_SPEED = -0.2
-Aliens.FIGHTER_BANK_MULTIPLIER = 10  -- Banking intensity
-Aliens.FIGHTER_MAX_BANK = 0.083  -- Max bank angle (30 degrees)
-Aliens.FIGHTER_BANK_DAMPING = 0.9
+-- Fighter AI behavior - forward-only flight model
+Aliens.FIGHTER_TURN_SPEED = 2.0      -- Radians per second turn rate
+Aliens.FIGHTER_MIN_ALTITUDE = 3      -- Minimum altitude above terrain
+Aliens.FIGHTER_MAX_ALTITUDE = 20     -- Maximum altitude
+Aliens.FIGHTER_ATTACK_DIST = 15      -- Distance to start attack run
+Aliens.FIGHTER_RETREAT_DIST = 30     -- Distance to retreat to after attack
+Aliens.FIGHTER_FIRE_CONE = 0.3       -- Cone of fire (radians, ~17 degrees)
+Aliens.FIGHTER_BURST_MIN = 5         -- Minimum shots per burst
+Aliens.FIGHTER_BURST_MAX = 10        -- Maximum shots per burst
+Aliens.FIGHTER_BURST_RATE = 8        -- Shots per second during burst
+Aliens.FIGHTER_BURST_COOLDOWN = 3.0  -- Seconds between bursts
+Aliens.FIGHTER_BANK_MULTIPLIER = 15  -- Banking intensity based on turn rate
+Aliens.FIGHTER_MAX_BANK = 0.5        -- Max bank angle (radians)
 
 -- Mother ship behavior
 Aliens.MOTHER_SHIP_FIRE_RATE = 4  -- Bullets per second (increased for bullet hell)
@@ -90,19 +87,19 @@ function Aliens.spawn_fighter(x, y, z)
         vx = 0,
         vy = 0,
         vz = 0,
-        yaw = 0,
+        yaw = math.random() * math.pi * 2,  -- Random initial facing
         roll = 0,
         prev_yaw = 0,
         health = Aliens.FIGHTER_HEALTH,
         max_health = Aliens.FIGHTER_HEALTH,
-        fire_timer = 0,
         target = nil,
         type = "fighter",
-        -- AI state
-        ai_state = "engage",
-        ai_timer = 0,
-        ai_duration = Aliens.FIGHTER_ENGAGE_TIME + (math.random() * 2 - 1) * Aliens.FIGHTER_STATE_TIME_VARIANCE,
-        circle_angle = math.random()
+        -- AI state: "approach" (fly toward player), "attack" (firing burst), "retreat" (fly away)
+        ai_state = "approach",
+        -- Burst firing state
+        burst_shots_remaining = 0,
+        burst_timer = 0,
+        burst_cooldown = math.random() * 2,  -- Stagger initial attacks
     }
     table.insert(Aliens.fighters, fighter)
     return fighter
@@ -165,7 +162,8 @@ function Aliens.start_next_wave(player, landing_pads)
 end
 
 -- Update all aliens
-function Aliens.update(dt, player, player_on_pad)
+-- world_objects: {heightmap, trees, buildings} for collision detection
+function Aliens.update(dt, player, player_on_pad, world_objects)
     -- Update fighters
     for i = #Aliens.fighters, 1, -1 do
         local fighter = Aliens.fighters[i]
@@ -177,7 +175,7 @@ function Aliens.update(dt, player, player_on_pad)
             end
             table.remove(Aliens.fighters, i)
         else
-            Aliens.update_fighter(fighter, dt, player, player_on_pad)
+            Aliens.update_fighter(fighter, dt, player, player_on_pad, world_objects)
         end
     end
 
@@ -206,166 +204,214 @@ function Aliens.update(dt, player, player_on_pad)
     end
 end
 
--- Update fighter AI
-function Aliens.update_fighter(fighter, dt, player, player_on_pad)
-    fighter.ai_timer = fighter.ai_timer + dt
-
-    -- Direction to player
+-- Update fighter AI - forward-only flight model with burst firing
+-- world_objects: {heightmap, trees, buildings} for collision detection
+function Aliens.update_fighter(fighter, dt, player, player_on_pad, world_objects)
+    -- Direction and distance to player
     local dx = player.x - fighter.x
     local dy = player.y - fighter.y
     local dz = player.z - fighter.z
-    local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+    local dist_xz = math.sqrt(dx * dx + dz * dz)
+    local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-    -- If player is on landing pad, fly away from city center
+    -- Calculate angle to player (horizontal plane)
+    local angle_to_player = math.atan2(dx, dz)
+
+    -- Get terrain height for altitude management
+    local ground_height = 0
+    if world_objects and world_objects.heightmap then
+        ground_height = world_objects.heightmap.get_height(fighter.x, fighter.z)
+    end
+    local min_flight_height = ground_height + Aliens.FIGHTER_MIN_ALTITUDE
+
+    -- If player is on landing pad, fly away
     if player_on_pad then
-        -- Direction away from city center (0,0)
-        local to_center_x = -fighter.x
-        local to_center_z = -fighter.z
-        local center_dist = math.sqrt(to_center_x * to_center_x + to_center_z * to_center_z)
-
-        if center_dist > 0.1 then
-            -- Fly away from center at faster speed
-            local flee_speed = Aliens.FIGHTER_SPEED * 1.5
-            fighter.vx = -(to_center_x / center_dist) * flee_speed
-            fighter.vz = -(to_center_z / center_dist) * flee_speed
-            -- Maintain altitude
-            if fighter.y < Aliens.FIGHTER_MIN_ALTITUDE + 5 then
-                fighter.vy = Aliens.FIGHTER_ALTITUDE_CLIMB_SPEED * 2
-            else
-                fighter.vy = 0
-            end
-        end
-
-        -- Update position and rotation, skip normal AI
-        fighter.x = fighter.x + fighter.vx * dt
-        fighter.y = fighter.y + fighter.vy * dt
-        fighter.z = fighter.z + fighter.vz * dt
-
-        -- Rotate to face velocity
-        fighter.prev_yaw = fighter.yaw
-        fighter.yaw = math.atan2(fighter.vx, fighter.vz)
-        return  -- Skip normal AI when retreating from safe zone
+        fighter.ai_state = "retreat"
+        fighter.burst_shots_remaining = 0
     end
 
-    if fighter.ai_state == "engage" then
-        -- Engage: fly close and circle
-        if fighter.ai_timer >= fighter.ai_duration then
-            fighter.ai_state = "retreat"
-            fighter.ai_timer = 0
-            fighter.ai_duration = Aliens.FIGHTER_RETREAT_TIME + (math.random() * 2 - 1) * Aliens.FIGHTER_STATE_TIME_VARIANCE
+    -- Determine target yaw based on AI state
+    local target_yaw = fighter.yaw
+    local target_altitude = math.max(player.y + 2, min_flight_height)
+
+    if fighter.ai_state == "approach" then
+        -- Fly toward player
+        target_yaw = angle_to_player
+        target_altitude = math.max(player.y + 3, min_flight_height)
+
+        -- Check if close enough and player is in cone of fire
+        local yaw_diff = angle_to_player - fighter.yaw
+        while yaw_diff > math.pi do yaw_diff = yaw_diff - math.pi * 2 end
+        while yaw_diff < -math.pi do yaw_diff = yaw_diff + math.pi * 2 end
+
+        -- If close enough and facing player, start attack
+        if dist_xz < Aliens.FIGHTER_ATTACK_DIST and math.abs(yaw_diff) < Aliens.FIGHTER_FIRE_CONE then
+            if fighter.burst_cooldown <= 0 then
+                -- Start burst
+                fighter.ai_state = "attack"
+                fighter.burst_shots_remaining = Aliens.FIGHTER_BURST_MIN +
+                    math.floor(math.random() * (Aliens.FIGHTER_BURST_MAX - Aliens.FIGHTER_BURST_MIN + 1))
+                fighter.burst_timer = 0
+            end
         end
 
-        local desired_dist = Aliens.FIGHTER_ENGAGE_DIST
+        -- Update burst cooldown
+        fighter.burst_cooldown = fighter.burst_cooldown - dt
 
-        if dist > desired_dist + Aliens.FIGHTER_APPROACH_THRESHOLD then
-            -- Move toward player
-            local dir_x = dx / dist
-            local dir_y = dy / dist
-            local dir_z = dz / dist
-            fighter.vx = dir_x * Aliens.FIGHTER_SPEED
-            fighter.vy = dir_y * Aliens.FIGHTER_SPEED
-            fighter.vz = dir_z * Aliens.FIGHTER_SPEED
-        else
-            -- Circle around player
-            fighter.circle_angle = fighter.circle_angle + dt * Aliens.FIGHTER_CIRCLE_SPEED
-            local circle_x = player.x + math.cos(fighter.circle_angle * math.pi * 2) * Aliens.FIGHTER_CIRCLE_RADIUS
-            local circle_z = player.z + math.sin(fighter.circle_angle * math.pi * 2) * Aliens.FIGHTER_CIRCLE_RADIUS
-            local circle_y = player.y + Aliens.FIGHTER_CIRCLE_HEIGHT_OFFSET
+    elseif fighter.ai_state == "attack" then
+        -- Keep facing player during attack
+        target_yaw = angle_to_player
 
-            local to_x = circle_x - fighter.x
-            local to_y = circle_y - fighter.y
-            local to_z = circle_z - fighter.z
-            local to_dist = math.sqrt(to_x*to_x + to_y*to_y + to_z*to_z)
+        -- Fire burst
+        fighter.burst_timer = fighter.burst_timer + dt
+        local burst_interval = 1.0 / Aliens.FIGHTER_BURST_RATE
 
-            if to_dist > 0.1 then
-                fighter.vx = (to_x / to_dist) * Aliens.FIGHTER_SPEED
-                fighter.vy = (to_y / to_dist) * Aliens.FIGHTER_SPEED
-                fighter.vz = (to_z / to_dist) * Aliens.FIGHTER_SPEED
+        if fighter.burst_timer >= burst_interval and fighter.burst_shots_remaining > 0 then
+            -- Check cone of fire
+            local yaw_diff = angle_to_player - fighter.yaw
+            while yaw_diff > math.pi do yaw_diff = yaw_diff - math.pi * 2 end
+            while yaw_diff < -math.pi do yaw_diff = yaw_diff + math.pi * 2 end
+
+            if math.abs(yaw_diff) < Aliens.FIGHTER_FIRE_CONE and not player_on_pad then
+                -- Fire at player
+                if Aliens.spawn_bullet and dist > 0.1 then
+                    local dir_x = dx / dist
+                    local dir_y = dy / dist
+                    local dir_z = dz / dist
+                    Aliens.spawn_bullet(
+                        fighter.x, fighter.y, fighter.z,
+                        dir_x, dir_y, dir_z,
+                        Aliens.FIGHTER_FIRE_RANGE
+                    )
+                end
             end
+            fighter.burst_shots_remaining = fighter.burst_shots_remaining - 1
+            fighter.burst_timer = 0
+        end
+
+        -- When burst is done, retreat
+        if fighter.burst_shots_remaining <= 0 then
+            fighter.ai_state = "retreat"
+            fighter.burst_cooldown = Aliens.FIGHTER_BURST_COOLDOWN
         end
 
     elseif fighter.ai_state == "retreat" then
-        -- Retreat: fly away
-        if fighter.ai_timer >= fighter.ai_duration then
-            fighter.ai_state = "engage"
-            fighter.ai_timer = 0
-            fighter.ai_duration = Aliens.FIGHTER_ENGAGE_TIME + (math.random() * 2 - 1) * Aliens.FIGHTER_STATE_TIME_VARIANCE
+        -- Fly away from player
+        target_yaw = angle_to_player + math.pi  -- Opposite direction
+        target_altitude = math.max(player.y + 5, min_flight_height + 5)
+
+        -- Once far enough, approach again
+        if dist_xz > Aliens.FIGHTER_RETREAT_DIST then
+            fighter.ai_state = "approach"
         end
 
-        local desired_dist = Aliens.FIGHTER_RETREAT_DIST
-
-        if dist < desired_dist - Aliens.FIGHTER_APPROACH_THRESHOLD then
-            -- Move away from player
-            local dir_x = -dx / dist
-            local dir_y = -dy / dist
-            local dir_z = -dz / dist
-            fighter.vx = dir_x * Aliens.FIGHTER_SPEED
-            fighter.vy = dir_y * Aliens.FIGHTER_SPEED
-            fighter.vz = dir_z * Aliens.FIGHTER_SPEED
-        else
-            -- Hold position
-            fighter.vx = 0
-            fighter.vy = 0
-            fighter.vz = 0
-        end
+        -- Update burst cooldown while retreating
+        fighter.burst_cooldown = fighter.burst_cooldown - dt
     end
 
-    -- Stay above minimum altitude
-    if fighter.y < Aliens.FIGHTER_MIN_ALTITUDE then
-        fighter.vy = Aliens.FIGHTER_ALTITUDE_CLIMB_SPEED
-    elseif fighter.y > Aliens.FIGHTER_MAX_ALTITUDE then
-        fighter.vy = Aliens.FIGHTER_ALTITUDE_DESCEND_SPEED
+    -- Clamp target altitude
+    target_altitude = math.min(target_altitude, Aliens.FIGHTER_MAX_ALTITUDE)
+
+    -- Smoothly rotate toward target yaw (forward-only movement)
+    local yaw_diff = target_yaw - fighter.yaw
+    while yaw_diff > math.pi do yaw_diff = yaw_diff - math.pi * 2 end
+    while yaw_diff < -math.pi do yaw_diff = yaw_diff + math.pi * 2 end
+
+    local turn_amount = Aliens.FIGHTER_TURN_SPEED * dt
+    if math.abs(yaw_diff) < turn_amount then
+        fighter.yaw = target_yaw
+    else
+        fighter.yaw = fighter.yaw + turn_amount * (yaw_diff > 0 and 1 or -1)
     end
+
+    -- Normalize yaw
+    while fighter.yaw > math.pi do fighter.yaw = fighter.yaw - math.pi * 2 end
+    while fighter.yaw < -math.pi do fighter.yaw = fighter.yaw + math.pi * 2 end
+
+    -- Calculate banking based on turn rate
+    local turn_rate = yaw_diff / dt  -- Approximate turn rate
+    local target_roll = -turn_rate * 0.1  -- Bank into turn
+    target_roll = math.max(-Aliens.FIGHTER_MAX_BANK, math.min(Aliens.FIGHTER_MAX_BANK, target_roll))
+    fighter.roll = fighter.roll + (target_roll - fighter.roll) * 0.1
+
+    -- Move forward in facing direction (forward-only movement)
+    local forward_x = math.sin(fighter.yaw)
+    local forward_z = math.cos(fighter.yaw)
+
+    fighter.vx = forward_x * Aliens.FIGHTER_SPEED
+    fighter.vz = forward_z * Aliens.FIGHTER_SPEED
+
+    -- Vertical movement toward target altitude
+    local alt_diff = target_altitude - fighter.y
+    fighter.vy = math.max(-1.0, math.min(1.0, alt_diff * 0.5))
 
     -- Update position
     fighter.x = fighter.x + fighter.vx * dt
     fighter.y = fighter.y + fighter.vy * dt
     fighter.z = fighter.z + fighter.vz * dt
 
-    -- Rotate to face velocity direction
-    local speed_sq = fighter.vx * fighter.vx + fighter.vz * fighter.vz
-    if speed_sq > 0.01 then  -- Only update yaw when moving
-        local new_yaw = math.atan2(fighter.vx, fighter.vz)
+    -- Collision detection with world objects
+    if world_objects then
+        local fighter_radius = 0.5
 
-        -- Calculate banking based on yaw change rate
-        local yaw_change = new_yaw - fighter.prev_yaw
-        while yaw_change > math.pi do yaw_change = yaw_change - math.pi * 2 end
-        while yaw_change < -math.pi do yaw_change = yaw_change + math.pi * 2 end
-
-        -- Target roll based on turn rate (limited)
-        local target_roll = -yaw_change * Aliens.FIGHTER_BANK_MULTIPLIER
-        local max_roll = Aliens.FIGHTER_MAX_BANK * math.pi * 2  -- ~30 degrees
-        target_roll = math.max(-max_roll, math.min(max_roll, target_roll))
-
-        -- Smoothly lerp toward target roll
-        fighter.roll = fighter.roll + (target_roll - fighter.roll) * 0.1
-
-        fighter.prev_yaw = fighter.yaw
-        fighter.yaw = new_yaw
-    else
-        -- Not moving - decay roll to 0
-        fighter.roll = fighter.roll * 0.9
-    end
-
-    -- Shoot at player
-    fighter.fire_timer = fighter.fire_timer + dt
-
-    if not player_on_pad and fighter.ai_state == "engage" and dist <= Aliens.FIGHTER_FIRE_RANGE then
-        if fighter.fire_timer >= (1 / Aliens.FIGHTER_FIRE_RATE) then
-            local to_player_x = dx / dist
-            local to_player_y = dy / dist
-            local to_player_z = dz / dist
-
-            if Aliens.spawn_bullet then
-                Aliens.spawn_bullet(
-                    fighter.x, fighter.y, fighter.z,
-                    to_player_x, to_player_y, to_player_z,
-                    Aliens.FIGHTER_FIRE_RANGE
-                )
+        -- Terrain collision
+        if world_objects.heightmap then
+            local curr_ground = world_objects.heightmap.get_height(fighter.x, fighter.z)
+            local min_height = curr_ground + fighter_radius + 0.5
+            if fighter.y < min_height then
+                fighter.y = min_height
+                fighter.vy = 0.5
+                fighter.health = fighter.health - 10
             end
-            fighter.fire_timer = 0
+        end
+
+        -- Tree collision
+        if world_objects.trees then
+            local all_trees = world_objects.trees.get_all()
+            for _, tree in ipairs(all_trees) do
+                local tree_radius = 0.55
+                local tree_height = 2.0
+                local tdx = fighter.x - tree.x
+                local tdz = fighter.z - tree.z
+                local tdist = math.sqrt(tdx * tdx + tdz * tdz)
+                local combined_radius = fighter_radius + tree_radius
+
+                if tdist < combined_radius and fighter.y < tree.y + tree_height then
+                    if tdist > 0.01 then
+                        local push_x = tdx / tdist
+                        local push_z = tdz / tdist
+                        fighter.x = tree.x + push_x * (combined_radius + 0.1)
+                        fighter.z = tree.z + push_z * (combined_radius + 0.1)
+                        fighter.health = fighter.health - 5
+                    end
+                end
+            end
+        end
+
+        -- Building collision
+        if world_objects.buildings then
+            for _, building in ipairs(world_objects.buildings) do
+                local half_width = building.width / 2 + fighter_radius
+                local half_depth = building.depth / 2 + fighter_radius
+                local building_top = building.y + building.height
+
+                if fighter.x > building.x - half_width and fighter.x < building.x + half_width and
+                   fighter.z > building.z - half_depth and fighter.z < building.z + half_depth and
+                   fighter.y < building_top then
+                    local old_x, old_z = fighter.x, fighter.z
+                    fighter.x, fighter.z = Collision.push_out_of_box(
+                        fighter.x, fighter.z,
+                        building.x, building.z,
+                        half_width, half_depth
+                    )
+                    fighter.health = fighter.health - 15
+                end
+            end
         end
     end
+
+    -- Store previous yaw for next frame
+    fighter.prev_yaw = fighter.yaw
 end
 
 -- Update mother ship
@@ -468,9 +514,10 @@ function Aliens.draw_alien(renderer, alien, mesh, texData, scale)
     if not mesh.triangles or #mesh.triangles == 0 then return end
 
     -- Build model matrix with yaw and roll (for fighters)
-    -- Model faces +Z by default, yaw rotates around Y axis
-    -- Roll should be applied around the local forward axis (after yaw)
-    local yawQ = quat.fromAxisAngle(0, 1, 0, alien.yaw)
+    -- Model faces +X by default, so add 90 degree offset to align with +Z (forward)
+    -- yaw rotates around Y axis, roll around local forward axis
+    local model_yaw_offset = -math.pi / 2  -- Rotate model 90 degrees right to face forward
+    local yawQ = quat.fromAxisAngle(0, 1, 0, alien.yaw + model_yaw_offset)
     -- Apply roll in local space: multiply roll FIRST then yaw (right-to-left order)
     local rollQ = quat.fromAxisAngle(0, 0, 1, alien.roll or 0)
     -- This order: first roll (local Z), then yaw (world Y)
@@ -534,28 +581,56 @@ function Aliens.all_waves_complete()
     return Aliens.current_wave >= #Aliens.waves and Aliens.wave_complete
 end
 
--- Draw debug visuals for combat (bounding boxes, velocity lines, target lines)
+-- Draw debug visuals for combat
+-- Basic (COMBAT_DEBUG): facing direction (red) + velocity (blue) arrows
+-- Detailed (COMBAT_DEBUG_DETAILED): adds bounding boxes, axes, target lines
 function Aliens.draw_debug(renderer)
     if not config.COMBAT_DEBUG then return end
 
     -- Draw debug for all fighters
     for _, fighter in ipairs(Aliens.fighters) do
-        Aliens.draw_alien_debug(renderer, fighter, 0.5, 0, 255, 255)  -- Cyan velocity
+        Aliens.draw_alien_debug(renderer, fighter, 0.5)
     end
 
     -- Draw debug for mother ship
     if Aliens.mother_ship then
-        Aliens.draw_alien_debug(renderer, Aliens.mother_ship, 2.0, 255, 0, 255)  -- Magenta velocity
+        Aliens.draw_alien_debug(renderer, Aliens.mother_ship, 2.0)
     end
 end
 
 -- Draw debug visuals for a single alien
-function Aliens.draw_alien_debug(renderer, alien, radius, vel_r, vel_g, vel_b)
+-- Basic (COMBAT_DEBUG): red facing arrow + blue velocity arrow
+-- Detailed (COMBAT_DEBUG_DETAILED): bounding boxes, axes, target lines
+function Aliens.draw_alien_debug(renderer, alien, radius)
     local x, y, z = alien.x, alien.y, alien.z
+
+    -- BASIC DEBUG: Facing direction (RED) + Velocity (BLUE)
+    -- Draw facing direction (RED arrow based on yaw - where model is pointing)
+    local facing_length = 3.0
+    local facing_x = math.sin(alien.yaw) * facing_length
+    local facing_z = math.cos(alien.yaw) * facing_length
+    Aliens.draw_debug_line(renderer, x, y, z, x + facing_x, y, z + facing_z, 255, 80, 80)
+    -- Draw small arrowhead
+    local arrow_size = 0.5
+    local arrow_angle = alien.yaw + math.pi * 0.85
+    local arrow_x1 = x + facing_x + math.sin(arrow_angle) * arrow_size
+    local arrow_z1 = z + facing_z + math.cos(arrow_angle) * arrow_size
+    arrow_angle = alien.yaw - math.pi * 0.85
+    local arrow_x2 = x + facing_x + math.sin(arrow_angle) * arrow_size
+    local arrow_z2 = z + facing_z + math.cos(arrow_angle) * arrow_size
+    Aliens.draw_debug_line(renderer, x + facing_x, y, z + facing_z, arrow_x1, y, arrow_z1, 255, 80, 80)
+    Aliens.draw_debug_line(renderer, x + facing_x, y, z + facing_z, arrow_x2, y, arrow_z2, 255, 80, 80)
+
+    -- Draw velocity vector (BLUE arrow showing movement direction)
+    local vel_scale = 2.0  -- Scale velocity for visibility
+    local vx, vy, vz = alien.vx * vel_scale, alien.vy * vel_scale, alien.vz * vel_scale
+    Aliens.draw_debug_line(renderer, x, y, z, x + vx, y + vy, z + vz, 80, 150, 255)
+
+    -- DETAILED DEBUG: Only if enabled
+    if not config.COMBAT_DEBUG_DETAILED then return end
 
     -- Draw 3-axis cross at center
     local axis_length = radius * 1.5
-
     -- X axis (red)
     Aliens.draw_debug_line(renderer, x - axis_length, y, z, x + axis_length, y, z, 255, 0, 0)
     -- Y axis (green)
@@ -581,15 +656,10 @@ function Aliens.draw_alien_debug(renderer, alien, radius, vel_r, vel_g, vel_b)
     Aliens.draw_debug_line(renderer, x+r, y-r, z+r, x+r, y+r, z+r, 255, 255, 0)
     Aliens.draw_debug_line(renderer, x-r, y-r, z+r, x-r, y+r, z+r, 255, 255, 0)
 
-    -- Draw velocity vector (colored line showing movement direction)
-    local vel_scale = 2.0  -- Scale velocity for visibility
-    local vx, vy, vz = alien.vx * vel_scale, alien.vy * vel_scale, alien.vz * vel_scale
-    Aliens.draw_debug_line(renderer, x, y, z, x + vx, y + vy, z + vz, vel_r, vel_g, vel_b)
-
-    -- Draw target line (red line to target)
+    -- Draw target line (orange line to target)
     if alien.target then
         local tx, ty, tz = alien.target.x, alien.target.y, alien.target.z
-        Aliens.draw_debug_line(renderer, x, y, z, tx, ty, tz, 255, 50, 50)
+        Aliens.draw_debug_line(renderer, x, y, z, tx, ty, tz, 255, 150, 50)
     end
 end
 

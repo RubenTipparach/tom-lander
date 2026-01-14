@@ -62,9 +62,18 @@ end
 -- Draw skydome centered at camera position
 -- IMPORTANT: This should be called FIRST before other geometry
 -- Uses dedicated sky shader (no fog) and no depth test
--- use_overcast: if true, uses the overcast/cloudy sky texture for weather
-function Skydome.draw(renderer, cam_x, cam_y, cam_z, use_overcast)
-    local sprite_id = use_overcast and Constants.SPRITE_SKYBOX_OVERCAST or Constants.SPRITE_SKYBOX
+-- sky_type: "normal" (default), "overcast" (weather), or "sunset" (mission 7)
+function Skydome.draw(renderer, cam_x, cam_y, cam_z, sky_type)
+    -- Select sprite based on sky type
+    local sprite_id = Constants.SPRITE_SKYBOX  -- default: normal sky
+    if sky_type == "overcast" then
+        sprite_id = Constants.SPRITE_SKYBOX_OVERCAST
+    elseif sky_type == "sunset" then
+        sprite_id = Constants.SPRITE_SKYBOX_SUNSET
+    elseif sky_type == true then
+        -- Backwards compatibility: true = overcast
+        sprite_id = Constants.SPRITE_SKYBOX_OVERCAST
+    end
     local texData = Constants.getTextureData(sprite_id)
     if not texData then return end
 
