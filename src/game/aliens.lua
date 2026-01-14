@@ -135,23 +135,25 @@ function Aliens.start_next_wave(player, landing_pads)
 
     local wave = Aliens.waves[Aliens.current_wave]
     Aliens.wave_complete = false
+    Aliens.wave_spawning = true  -- Flag to prevent immediate wave_complete detection
 
     if wave.type == "fighter" then
-        -- Spawn fighters in circle around player
+        -- Spawn fighters far from city center (50-80 units out)
         for i = 1, wave.count do
-            local angle = (i / wave.count) * math.pi * 2
-            local distance = 5
-            local x = player.x + math.cos(angle) * distance
-            local z = player.z + math.sin(angle) * distance
-            local y = player.y + 2
+            local angle = (i / wave.count) * math.pi * 2 + math.random() * 0.5
+            local distance = 50 + math.random() * 30  -- 50-80 units from center
+            local x = math.cos(angle) * distance
+            local z = math.sin(angle) * distance
+            local y = 8 + math.random() * 5  -- Spawn at altitude 8-13
             local fighter = Aliens.spawn_fighter(x, y, z)
             fighter.target = player
         end
     elseif wave.type == "mother" then
-        -- Spawn mother ship above and north of player
-        local spawn_x = player.x
-        local spawn_y = player.y + 20
-        local spawn_z = player.z + 100
+        -- Spawn mother ship far away, high up
+        local angle = math.random() * math.pi * 2
+        local spawn_x = math.cos(angle) * 100
+        local spawn_y = 25 + math.random() * 10
+        local spawn_z = math.sin(angle) * 100
 
         local mother = Aliens.spawn_mother_ship(spawn_x, spawn_y, spawn_z)
         mother.target = player
@@ -191,8 +193,13 @@ function Aliens.update(dt, player, player_on_pad)
         end
     end
 
-    -- Check if wave is complete
-    if #Aliens.fighters == 0 and not Aliens.mother_ship and Aliens.current_wave > 0 then
+    -- Clear spawning flag once we have enemies
+    if Aliens.wave_spawning and (#Aliens.fighters > 0 or Aliens.mother_ship) then
+        Aliens.wave_spawning = false
+    end
+
+    -- Check if wave is complete (only if not in spawning state)
+    if not Aliens.wave_spawning and #Aliens.fighters == 0 and not Aliens.mother_ship and Aliens.current_wave > 0 then
         Aliens.wave_complete = true
     end
 end
@@ -206,6 +213,37 @@ function Aliens.update_fighter(fighter, dt, player, player_on_pad)
     local dy = player.y - fighter.y
     local dz = player.z - fighter.z
     local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+    -- If player is on landing pad, fly away from city center
+    if player_on_pad then
+        -- Direction away from city center (0,0)
+        local to_center_x = -fighter.x
+        local to_center_z = -fighter.z
+        local center_dist = math.sqrt(to_center_x * to_center_x + to_center_z * to_center_z)
+
+        if center_dist > 0.1 then
+            -- Fly away from center at faster speed
+            local flee_speed = Aliens.FIGHTER_SPEED * 1.5
+            fighter.vx = -(to_center_x / center_dist) * flee_speed
+            fighter.vz = -(to_center_z / center_dist) * flee_speed
+            -- Maintain altitude
+            if fighter.y < Aliens.FIGHTER_MIN_ALTITUDE + 5 then
+                fighter.vy = Aliens.FIGHTER_ALTITUDE_CLIMB_SPEED * 2
+            else
+                fighter.vy = 0
+            end
+        end
+
+        -- Update position and rotation, skip normal AI
+        fighter.x = fighter.x + fighter.vx * dt
+        fighter.y = fighter.y + fighter.vy * dt
+        fighter.z = fighter.z + fighter.vz * dt
+
+        -- Rotate to face velocity
+        fighter.prev_yaw = fighter.yaw
+        fighter.yaw = math.atan2(fighter.vx, fighter.vz)
+        return  -- Skip normal AI when retreating from safe zone
+    end
 
     if fighter.ai_state == "engage" then
         -- Engage: fly close and circle
@@ -455,6 +493,7 @@ function Aliens.reset()
     Aliens.mother_ship = nil
     Aliens.current_wave = 0
     Aliens.wave_complete = false
+    Aliens.wave_spawning = false
     Aliens.mother_ship_destroyed = false
     Aliens.mother_ship_destroyed_time = nil
 end

@@ -85,6 +85,7 @@ local ship_death_mode = false
 local ship_death_timer = 0
 local ship_death_explosion_count = 0
 local ship_death_pos = {x = 0, y = 0, z = 0}
+local ship_death_landed = false  -- True once ship has hit the ground
 
 -- Ship repair state
 local repair_timer = 0
@@ -464,11 +465,9 @@ function flight_scene.update(dt)
         ship_death_timer = 0
         ship_death_explosion_count = 0
         ship_death_pos = {x = ship.x, y = ship.y, z = ship.z}
+        ship_death_landed = false
 
-        -- Freeze the ship in place
-        ship.vx = 0
-        ship.vy = 0
-        ship.vz = 0
+        -- Don't freeze - let it fall! Just stop rotation controls
         ship.local_vpitch = 0
         ship.local_vyaw = 0
         ship.local_vroll = 0
@@ -479,19 +478,48 @@ function flight_scene.update(dt)
         AudioManager.stop_thruster()  -- Stop thruster sound
     end
 
-    -- Handle death sequence - skip normal physics
+    -- Handle death sequence - ship falls with gravity until hitting ground
     if ship_death_mode then
         ship_death_timer = ship_death_timer + dt
 
-        -- Keep ship completely frozen
-        ship.vx = 0
-        ship.vy = 0
-        ship.vz = 0
+        -- Stop rotation controls but allow falling
         ship.local_vpitch = 0
         ship.local_vyaw = 0
         ship.local_vroll = 0
 
-        -- Spawn additional explosions during death sequence
+        if not ship_death_landed then
+            -- Apply gravity
+            local gravity = config.GRAVITY or 0.15
+            ship.vy = ship.vy - gravity * dt * 60
+
+            -- Apply some air resistance to horizontal movement
+            ship.vx = ship.vx * 0.99
+            ship.vz = ship.vz * 0.99
+
+            -- Update position
+            ship.x = ship.x + ship.vx * dt * 60
+            ship.y = ship.y + ship.vy * dt * 60
+            ship.z = ship.z + ship.vz * dt * 60
+
+            -- Check for ground collision
+            local ground_height = Heightmap.get_height(ship.x, ship.z)
+            local ship_ground_offset = config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y
+
+            if ship.y < ground_height + ship_ground_offset then
+                -- Hit the ground - stop falling
+                ship.y = ground_height + ship_ground_offset
+                ship.vx = 0
+                ship.vy = 0
+                ship.vz = 0
+                ship_death_landed = true
+
+                -- Spawn crash explosion on impact
+                Explosion.spawn_impact(ship.x, ship.y, ship.z, 1.0)
+                AudioManager.play_sfx(3)  -- Explosion sound
+            end
+        end
+
+        -- Spawn additional explosions during death sequence (while falling)
         if ship_death_timer < 2.0 and math.random() < dt * 3 then
             local offset_x = (math.random() - 0.5) * 3
             local offset_y = (math.random() - 0.5) * 2
@@ -847,13 +875,21 @@ function flight_scene.update(dt)
         for _, fighter in ipairs(Aliens.fighters) do
             local hits = Bullets.check_collision_sphere("enemy", fighter.x, fighter.y, fighter.z, 0.5)
             for _, hit in ipairs(hits) do
-                fighter.health = fighter.health - 25  -- Damage per hit
+                -- Random damage 5-10 per bullet
+                local damage = 5 + math.random() * 5
+                fighter.health = fighter.health - damage
+                -- Spawn small impact explosion at hit location
+                Explosion.spawn_impact(hit.x, hit.y, hit.z, 0.4)
             end
         end
         if Aliens.mother_ship then
             local hits = Bullets.check_collision_sphere("enemy", Aliens.mother_ship.x, Aliens.mother_ship.y, Aliens.mother_ship.z, 2.0)
             for _, hit in ipairs(hits) do
-                Aliens.mother_ship.health = Aliens.mother_ship.health - 25
+                -- Random damage 5-10 per bullet
+                local damage = 5 + math.random() * 5
+                Aliens.mother_ship.health = Aliens.mother_ship.health - damage
+                -- Spawn small impact explosion at hit location
+                Explosion.spawn_impact(hit.x, hit.y, hit.z, 0.5)
             end
         end
 
@@ -1053,8 +1089,8 @@ function flight_scene.draw()
         Aliens.draw(renderer)
         Aliens.draw_debug(renderer)
 
-        -- Draw bullets
-        Bullets.draw(renderer)
+        -- Draw bullets (pass viewMatrix for billboard math)
+        Bullets.draw(renderer, viewMatrix, cam)
     end
 
     -- Draw smoke particles (disabled - billboard rendering needs fixing)
@@ -1268,6 +1304,7 @@ function flight_scene.keypressed(key)
         -- Reset death state
         ship_death_mode = false
         ship_death_timer = 0
+        ship_death_landed = false
         repair_timer = 0
         is_repairing = false
         Billboard.reset()

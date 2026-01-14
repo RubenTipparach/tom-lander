@@ -527,6 +527,7 @@ function HUD.draw_thruster_indicator(ship)
     if not ship or not ship.thrusters or not ship.engine_positions then return end
     if not renderer.worldToScreen then return end  -- Need projection function
     if not ship.orientation then return end  -- Need ship orientation for rotation
+    if ship:is_destroyed() then return end  -- Hide when ship is destroyed
 
     -- Thruster mapping: 1=Right(D), 2=Left(A), 3=Front(W), 4=Back(S)
     local thruster_keys = {"D", "A", "W", "S"}

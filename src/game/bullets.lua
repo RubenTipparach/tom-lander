@@ -97,19 +97,84 @@ function Bullets.update(dt)
     end
 end
 
--- Draw bullets as camera-facing billboards
-function Bullets.draw(renderer)
+-- Draw bullets as camera-facing billboards using proper billboard math
+function Bullets.draw(renderer, viewMatrix, cam)
+    if #Bullets.bullets == 0 then return end
+
+    -- Extract camera right and up vectors from view matrix
+    -- View matrix is row-major in our engine
+    local right_x, right_y, right_z
+    local up_x, up_y, up_z
+
+    if viewMatrix then
+        -- Extract from view matrix (row-major, 1-indexed)
+        right_x = viewMatrix[1]
+        right_y = viewMatrix[2]
+        right_z = viewMatrix[3]
+
+        up_x = viewMatrix[5]
+        up_y = viewMatrix[6]
+        up_z = viewMatrix[7]
+    elseif cam then
+        -- Fallback: use camera vectors directly
+        right_x = cam.right.x
+        right_y = cam.right.y
+        right_z = cam.right.z
+
+        up_x = cam.up.x
+        up_y = cam.up.y
+        up_z = cam.up.z
+    else
+        -- Default fallback
+        right_x, right_y, right_z = 1, 0, 0
+        up_x, up_y, up_z = 0, 1, 0
+    end
+
     for _, bullet in ipairs(Bullets.bullets) do
         if bullet.active then
             -- Get texture for bullet sprite
             local texData = Constants.getTextureData(bullet.sprite)
             if texData then
-                -- Draw as billboard (camera-facing quad)
-                renderer.drawBillboard(
-                    bullet.x, bullet.y, bullet.z,
-                    Bullets.BULLET_SIZE,
-                    texData
-                )
+                local half = Bullets.BULLET_SIZE * 0.5
+                local x, y, z = bullet.x, bullet.y, bullet.z
+
+                -- Build quad vertices using camera right and up vectors
+                local v1 = {
+                    pos = {
+                        x - right_x * half + up_x * half,
+                        y - right_y * half + up_y * half,
+                        z - right_z * half + up_z * half
+                    },
+                    uv = {0, 0}
+                }
+                local v2 = {
+                    pos = {
+                        x + right_x * half + up_x * half,
+                        y + right_y * half + up_y * half,
+                        z + right_z * half + up_z * half
+                    },
+                    uv = {1, 0}
+                }
+                local v3 = {
+                    pos = {
+                        x + right_x * half - up_x * half,
+                        y + right_y * half - up_y * half,
+                        z + right_z * half - up_z * half
+                    },
+                    uv = {1, 1}
+                }
+                local v4 = {
+                    pos = {
+                        x - right_x * half - up_x * half,
+                        y - right_y * half - up_y * half,
+                        z - right_z * half - up_z * half
+                    },
+                    uv = {0, 1}
+                }
+
+                -- Draw as two triangles (emissive, full opacity)
+                renderer.drawTriangle3D(v1, v2, v3, nil, texData, 1.0, 1.0)
+                renderer.drawTriangle3D(v1, v3, v4, nil, texData, 1.0, 1.0)
             end
         end
     end
