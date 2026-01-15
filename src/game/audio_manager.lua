@@ -12,6 +12,7 @@ AudioManager.sfx_files = {
     [1] = { name = "thruster", file = "assets/sounds/thruster.wav", source = nil, looping = true },
     [3] = { name = "explosion", file = "assets/sounds/explosion.wav", source = nil, cooldown = 0.1 },
     [8] = { name = "collide", file = "assets/sounds/collide.wav", source = nil, cooldown = 0.15 },
+    [9] = { name = "you_died", file = "assets/sounds/you_died.wav", source = nil },
 }
 
 -- Track last play time for cooldown management
@@ -20,9 +21,12 @@ AudioManager.sfx_last_played = {}
 -- Music definitions
 AudioManager.music_files = {
     menu = { file = "assets/sounds/menu_music.wav", source = nil },
-    -- More tracks coming soon:
-    -- level1 = { file = "assets/sounds/level1_music.wav", source = nil },
-    -- level2 = { file = "assets/sounds/level2_music.wav", source = nil },
+    intro = { file = "assets/sounds/music/level_0_intro.wav", source = nil },
+    level1 = { file = "assets/sounds/music/level_1.wav", source = nil },
+    level2 = { file = "assets/sounds/music/second_level.wav", source = nil },
+    tom_lander = { file = "assets/sounds/music/tom_lander_ablemix.wav", source = nil },
+    hyperlevel = { file = "assets/sounds/music/hyperlevel.wav", source = nil },
+    lastday = { file = "assets/sounds/music/last_day.wav", source = nil },
 }
 
 -- Audio state
@@ -205,13 +209,13 @@ end
 
 -- Mission to music mapping (matching Picotron audio_manager)
 AudioManager.mission_music = {
-    [1] = "level1",      -- Mission 1-2: level1 music
-    [2] = "level1",
+    [1] = "intro",       -- Mission 1: intro/tutorial
+    [2] = "level1",      -- Mission 2: level1 music
     [3] = "tom_lander",  -- Mission 3: tom_lander
     [4] = "level2",      -- Mission 4: level2
     [5] = "hyperlevel",  -- Mission 5: hyperlevel (weather)
-    [6] = "lastday",     -- Mission 6+: lastday (combat)
-    [7] = "menu",        -- Racing mode: menu music for now
+    [6] = "lastday",     -- Mission 6: lastday (combat)
+    [7] = "hyperlevel",  -- Mission 7: racing mode
 }
 
 function AudioManager.start_level_music(mission_num)
@@ -234,6 +238,11 @@ function AudioManager.start_level_music(mission_num)
 
     -- Play at lower volume during gameplay
     AudioManager.play_music(music_name, AudioManager.music_volume * 0.5)
+end
+
+-- Play death sound effect
+function AudioManager.play_death_sound()
+    AudioManager.play_sfx(9)  -- sfx ID 9 = you_died
 end
 
 -- Stop all audio

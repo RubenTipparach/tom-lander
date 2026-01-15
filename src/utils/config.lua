@@ -129,6 +129,17 @@ config.SHIP_REPAIR_DELAY = 1.0                -- Seconds of being stationary bef
 config.SHIP_REPAIR_VELOCITY_THRESHOLD = 0.05  -- Max velocity to be considered "stationary"
 
 -- ===========================================
+-- BULLET SETTINGS
+-- ===========================================
+config.BULLET_MAX_COUNT = 100                 -- Total bullet budget
+config.BULLET_PLAYER_SPEED = 22               -- Player bullet speed (units per second)
+config.BULLET_ENEMY_SPEED = 18                -- Enemy bullet speed (units per second)
+config.BULLET_SIZE = 0.5                      -- Billboard size (world units)
+config.BULLET_PLAYER_RANGE = 100              -- Player bullet max travel distance
+config.BULLET_ENEMY_RANGE = 50                -- Enemy bullet max travel distance
+config.BULLET_PLAYER_FIRE_RATE = 4            -- Player bullets per second
+
+-- ===========================================
 -- EXPLOSION SETTINGS
 -- ===========================================
 config.EXPLOSION_IMPACT_SCALE = 0.8           -- Scale of impact explosions

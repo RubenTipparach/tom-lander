@@ -3,16 +3,18 @@
 
 local Constants = require("constants")
 local AudioManager = require("audio_manager")
+local config = require("config")
 
 local Bullets = {}
 
--- Bullet configuration
-Bullets.MAX_BULLETS = 100  -- Total bullet budget
-Bullets.PLAYER_BULLET_SPEED = 20  -- Units per second
-Bullets.ENEMY_BULLET_SPEED = 12  -- Units per second
-Bullets.BULLET_SIZE = 0.5  -- Billboard size (world units)
-Bullets.BULLET_RANGE = 100  -- Max range
-Bullets.PLAYER_FIRE_RATE = 4  -- Bullets per second
+-- Bullet configuration (from centralized config)
+Bullets.MAX_BULLETS = config.BULLET_MAX_COUNT
+Bullets.PLAYER_BULLET_SPEED = config.BULLET_PLAYER_SPEED
+Bullets.ENEMY_BULLET_SPEED = config.BULLET_ENEMY_SPEED
+Bullets.BULLET_SIZE = config.BULLET_SIZE
+Bullets.PLAYER_BULLET_RANGE = config.BULLET_PLAYER_RANGE
+Bullets.ENEMY_BULLET_RANGE = config.BULLET_ENEMY_RANGE
+Bullets.PLAYER_FIRE_RATE = config.BULLET_PLAYER_FIRE_RATE
 Bullets.PLAYER_FIRE_COOLDOWN = 1 / Bullets.PLAYER_FIRE_RATE
 
 -- Active bullets
@@ -38,7 +40,7 @@ function Bullets.spawn(x, y, z, dir_x, dir_y, dir_z, sprite, owner, max_range, s
         start_x = x,
         start_y = y,
         start_z = z,
-        max_range = max_range or Bullets.BULLET_RANGE,
+        max_range = max_range,
         active = true
     }
 
@@ -54,12 +56,12 @@ function Bullets.spawn_player_bullet(x, y, z, dir_x, dir_y, dir_z, max_range)
 
     Bullets.player_fire_timer = Bullets.PLAYER_FIRE_COOLDOWN
     AudioManager.play_sfx(0)  -- Shoot sound
-    return Bullets.spawn(x, y, z, dir_x, dir_y, dir_z, Constants.SPRITE_BULLET_PLAYER, "player", max_range, Bullets.PLAYER_BULLET_SPEED)
+    return Bullets.spawn(x, y, z, dir_x, dir_y, dir_z, Constants.SPRITE_BULLET_PLAYER, "player", max_range or Bullets.PLAYER_BULLET_RANGE, Bullets.PLAYER_BULLET_SPEED)
 end
 
 -- Spawn enemy bullet (no rate limit, controlled by enemy fire rate, slower speed)
 function Bullets.spawn_enemy_bullet(x, y, z, dir_x, dir_y, dir_z, max_range)
-    return Bullets.spawn(x, y, z, dir_x, dir_y, dir_z, Constants.SPRITE_BULLET_ENEMY, "enemy", max_range, Bullets.ENEMY_BULLET_SPEED)
+    return Bullets.spawn(x, y, z, dir_x, dir_y, dir_z, Constants.SPRITE_BULLET_ENEMY, "enemy", max_range or Bullets.ENEMY_BULLET_RANGE, Bullets.ENEMY_BULLET_SPEED)
 end
 
 -- Update all bullets

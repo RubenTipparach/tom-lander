@@ -488,6 +488,7 @@ function flight_scene.update(dt)
         -- Spawn the big death explosion
         Explosion.spawn_death(ship.x, ship.y, ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
         AudioManager.play_sfx(3)  -- Explosion sound
+        AudioManager.play_death_sound()  -- "You died" voice
         AudioManager.stop_thruster()  -- Stop thruster sound
     end
 
