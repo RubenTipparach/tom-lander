@@ -155,6 +155,7 @@ config.FLAME_ALPHA = 0.5             -- Flame transparency (0-1, 0.5 = 50% trans
 -- ===========================================
 -- CAMERA SETTINGS
 -- ===========================================
+config.CAMERA_FOLLOW_MODE_ENABLED = false -- Set to true to enable follow camera mode (currently disabled)
 config.CAMERA_DISTANCE_MIN = -3           -- Min camera distance at low speed (negative = behind ship)
 config.CAMERA_DISTANCE_MAX = -8           -- Max camera distance at high speed
 config.CAMERA_DISTANCE_SPEED_MAX = 0.3    -- Speed at which camera reaches max distance

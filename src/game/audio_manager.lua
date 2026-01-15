@@ -207,33 +207,32 @@ function AudioManager.start_menu_music()
     AudioManager.play_music("menu", AudioManager.music_volume)
 end
 
--- Mission to music mapping (matching Picotron audio_manager)
+-- Mission to music mapping
 AudioManager.mission_music = {
-    [1] = "intro",       -- Mission 1: intro/tutorial
+    [1] = "level1",      -- Mission 1: level1 music
     [2] = "level1",      -- Mission 2: level1 music
-    [3] = "tom_lander",  -- Mission 3: tom_lander
-    [4] = "level2",      -- Mission 4: level2
-    [5] = "hyperlevel",  -- Mission 5: hyperlevel (weather)
-    [6] = "lastday",     -- Mission 6: lastday (combat)
-    [7] = "hyperlevel",  -- Mission 7: racing mode
+    [3] = "level1",      -- Mission 3: level1 music
+    [4] = "tom_lander",  -- Mission 4: tom_lander
+    [5] = "level2",      -- Mission 5: level2
+    [6] = "hyperlevel",  -- Mission 6: hyperlevel (weather)
+    [7] = "lastday",     -- Mission 7: lastday (combat)
 }
 
 function AudioManager.start_level_music(mission_num)
     -- Stop current music first
     AudioManager.stop_music()
 
-    -- Get music for this mission (default to menu if not mapped)
-    local music_name = AudioManager.mission_music[mission_num] or "menu"
-
-    -- For missions 6+, use lastday (combat music)
-    if mission_num and mission_num >= 6 and not AudioManager.mission_music[mission_num] then
-        music_name = "lastday"
+    -- Get music for this mission (silence if not mapped)
+    local music_name = AudioManager.mission_music[mission_num]
+    if not music_name then
+        print("[Audio] No music assigned for mission " .. tostring(mission_num) .. ", playing silence")
+        return
     end
 
-    -- Check if the music track exists, fall back to menu if not
+    -- Check if the music track exists
     if not AudioManager.music_files[music_name] or not AudioManager.music_files[music_name].source then
-        print("[Audio] Track '" .. music_name .. "' not available, using menu music")
-        music_name = "menu"
+        print("[Audio] Track '" .. music_name .. "' not available, skipping")
+        return
     end
 
     -- Play at lower volume during gameplay

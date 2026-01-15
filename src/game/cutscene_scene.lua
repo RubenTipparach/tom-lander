@@ -4,8 +4,12 @@
 local cutscene_scene = {}
 local Cutscene = require("cutscene")
 local scene_manager = require("scene_manager")
+local AudioManager = require("audio_manager")
 
 function cutscene_scene.load()
+    -- Stop menu music and play intro music
+    AudioManager.stop_music()
+    AudioManager.play_music("intro", AudioManager.music_volume)
     Cutscene.start(1)
 end
 

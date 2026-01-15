@@ -182,6 +182,14 @@ end
 
 -- Update thruster states from keyboard (called from flight_scene)
 function Ship:update_thrusters()
+    -- If controls are disabled (e.g., race countdown), turn off all thrusters
+    if self.controls_disabled then
+        for i = 1, 4 do
+            self.thrusters[i].active = false
+        end
+        return
+    end
+
     -- Check each key separately (like Picotron)
     local w_pressed = love.keyboard.isDown("w") or love.keyboard.isDown("i")
     local a_pressed = love.keyboard.isDown("a") or love.keyboard.isDown("j")

@@ -171,7 +171,7 @@ function Mission.update(dt, ship, current_landing_pad)
 
     -- Handle race mission
     if Mission.type == "race" then
-        Mission.update_race(dt, ship_x, ship_z)
+        Mission.update_race(dt, ship_x, ship_y, ship_z)
         return
     end
 
@@ -253,12 +253,38 @@ function Mission.update(dt, ship, current_landing_pad)
 end
 
 -- Update race mission
-function Mission.update_race(dt, ship_x, ship_z)
+function Mission.update_race(dt, ship_x, ship_y, ship_z)
     if not Mission.race or not Mission.race_checkpoints then return end
     if Mission.race.failed then return end
 
     local race = Mission.race
     local checkpoints = Mission.race_checkpoints
+
+    -- Handle countdown (3-2-1-GO!)
+    if race.countdown_active then
+        race.countdown_timer = race.countdown_timer - dt
+
+        -- Determine what to display
+        local countdown_num = math.ceil(race.countdown_timer)
+        if countdown_num >= 4 then
+            Mission.current_objectives = {"GET READY!", "", "3", "[TAB] Menu"}
+        elseif countdown_num == 3 then
+            Mission.current_objectives = {"GET READY!", "", "3", "[TAB] Menu"}
+        elseif countdown_num == 2 then
+            Mission.current_objectives = {"GET READY!", "", "2", "[TAB] Menu"}
+        elseif countdown_num == 1 then
+            Mission.current_objectives = {"GET READY!", "", "1", "[TAB] Menu"}
+        elseif race.countdown_timer > 0 then
+            Mission.current_objectives = {"", "", "GO!", "[TAB] Menu"}
+        end
+
+        -- Countdown finished
+        if race.countdown_timer <= 0 then
+            race.countdown_active = false
+            print("[RACE] Countdown finished - GO!")
+        end
+        return  -- Don't update race logic during countdown
+    end
 
     -- Update checkpoint flash timer
     if race.checkpoint_flash > 0 then
@@ -284,14 +310,29 @@ function Mission.update_race(dt, ship_x, ship_z)
         return
     end
 
-    -- Check distance to current checkpoint
+    -- Check distance to current checkpoint (XZ plane + Y height check)
     local cp = checkpoints[race.current_checkpoint]
     local dx = ship_x - cp.x
     local dz = ship_z - cp.z
-    local dist = math.sqrt(dx * dx + dz * dz)
+    local dist_xz = math.sqrt(dx * dx + dz * dz)
 
-    if dist < race.checkpoint_radius then
+    -- Get ground height for this checkpoint (use cached value or 0)
+    local ground_y = cp.ground_y or 0
+    local ring_y = ground_y + (cp.y or 6)  -- Ring center height
+    local dy = ship_y - ring_y
+    local checkpoint_height = race.checkpoint_height or 4
+
+    -- Check if within horizontal radius AND vertical range
+    local in_horizontal = dist_xz < race.checkpoint_radius
+    local in_vertical = math.abs(dy) < checkpoint_height
+
+    if in_horizontal and in_vertical then
         -- Checkpoint reached!
+        print(string.format("[CHECKPOINT] #%d '%s' at (%.1f, %.1f, %.1f) - Ship Y: %.1f, Ring Y: %.1f",
+            race.current_checkpoint, cp.name or "unnamed",
+            cp.x, ring_y, cp.z,
+            ship_y, ring_y))
+
         race.checkpoint_flash = 0.5  -- Flash for 0.5 seconds
 
         -- Advance to next checkpoint
@@ -679,16 +720,23 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
         local dist = math.sqrt(dx * dx + dz * dz)
         if dist < 150 then  -- Only draw within 150 units
 
-            -- Get ground height at checkpoint
+            -- Get ground height at checkpoint (and cache it for detection)
             local ground_y = 0
             if heightmap and heightmap.get_height then
                 ground_y = heightmap.get_height(cp.x, cp.z)
+                cp.ground_y = ground_y  -- Cache for detection code
             end
 
-            -- Checkpoint ring properties
-            local ring_radius = race.checkpoint_radius * 0.8
-            local ring_height = ground_y + 8  -- 8 units above ground
+            -- Checkpoint gate properties - barrel/gate shape
+            local ring_radius = race.checkpoint_radius  -- Wide ring matches detection radius
+            local pillar_radius = 1.5  -- Narrow pillars above/below
+            local ring_center_y = ground_y + (cp.y or 6)  -- Ring height from checkpoint definition
+            local checkpoint_height = race.checkpoint_height or 4
+            local ring_bottom = ring_center_y - checkpoint_height
+            local ring_top = ring_center_y + checkpoint_height
+            local pillar_extend = 6  -- How far pillars extend above/below ring
             local segments = 12
+            local pillar_segments = 4  -- Fewer segments for narrow pillars
 
             -- Color based on checkpoint state
             local r, g, b
@@ -706,7 +754,7 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
                 r, g, b = 40, 80, 100
             end
 
-            -- Draw ring (horizontal circle)
+            -- Draw wide ring at bottom of detection zone
             for seg = 1, segments do
                 local angle1 = (seg - 1) * (2 * math.pi / segments)
                 local angle2 = seg * (2 * math.pi / segments)
@@ -716,37 +764,69 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
                 local x2 = cp.x + math.cos(angle2) * ring_radius
                 local z2 = cp.z + math.sin(angle2) * ring_radius
 
+                -- Bottom ring
                 renderer.drawLine3D(
-                    {x1, ring_height, z1},
-                    {x2, ring_height, z2},
+                    {x1, ring_bottom, z1},
+                    {x2, ring_bottom, z2},
                     r, g, b, false
                 )
 
-                -- Draw vertical pillar lines for current checkpoint
+                -- Top ring
+                renderer.drawLine3D(
+                    {x1, ring_top, z1},
+                    {x2, ring_top, z2},
+                    r, g, b, false
+                )
+
+                -- Vertical lines connecting top and bottom rings (current checkpoint)
                 if i == race.current_checkpoint then
                     renderer.drawLine3D(
-                        {x1, ground_y + 0.5, z1},
-                        {x1, ring_height, z1},
+                        {x1, ring_bottom, z1},
+                        {x1, ring_top, z1},
                         r, g, b, false
                     )
                 end
             end
 
-            -- Draw a second ring above for 3D effect (current checkpoint only)
+            -- Draw narrow pillars extending above and below (current checkpoint only)
             if i == race.current_checkpoint then
-                local upper_height = ring_height + 3
-                for seg = 1, segments do
-                    local angle1 = (seg - 1) * (2 * math.pi / segments)
-                    local angle2 = seg * (2 * math.pi / segments)
+                local pillar_top = ring_top + pillar_extend
+                local pillar_bottom = math.max(ground_y + 0.5, ring_bottom - pillar_extend)
 
-                    local x1 = cp.x + math.cos(angle1) * ring_radius
-                    local z1 = cp.z + math.sin(angle1) * ring_radius
-                    local x2 = cp.x + math.cos(angle2) * ring_radius
-                    local z2 = cp.z + math.sin(angle2) * ring_radius
+                for seg = 1, pillar_segments do
+                    local angle1 = (seg - 1) * (2 * math.pi / pillar_segments)
+                    local angle2 = seg * (2 * math.pi / pillar_segments)
 
+                    local px1 = cp.x + math.cos(angle1) * pillar_radius
+                    local pz1 = cp.z + math.sin(angle1) * pillar_radius
+                    local px2 = cp.x + math.cos(angle2) * pillar_radius
+                    local pz2 = cp.z + math.sin(angle2) * pillar_radius
+
+                    -- Upper pillar ring
                     renderer.drawLine3D(
-                        {x1, upper_height, z1},
-                        {x2, upper_height, z2},
+                        {px1, pillar_top, pz1},
+                        {px2, pillar_top, pz2},
+                        r, g, b, false
+                    )
+
+                    -- Upper pillar verticals
+                    renderer.drawLine3D(
+                        {px1, ring_top, pz1},
+                        {px1, pillar_top, pz1},
+                        r, g, b, false
+                    )
+
+                    -- Lower pillar ring
+                    renderer.drawLine3D(
+                        {px1, pillar_bottom, pz1},
+                        {px2, pillar_bottom, pz2},
+                        r, g, b, false
+                    )
+
+                    -- Lower pillar verticals
+                    renderer.drawLine3D(
+                        {px1, pillar_bottom, pz1},
+                        {px1, ring_bottom, pz1},
                         r, g, b, false
                     )
                 end
@@ -776,7 +856,18 @@ function Mission.get_race_data()
         lap_times = Mission.race.lap_times or {},
         best_lap = Mission.race.best_lap,
         best_lap_num = Mission.race.best_lap_num,
+        -- Countdown data
+        countdown_active = Mission.race.countdown_active,
+        countdown_timer = Mission.race.countdown_timer,
     }
+end
+
+-- Check if race countdown is active (controls should be disabled)
+function Mission.is_race_countdown_active()
+    if Mission.type ~= "race" or not Mission.race then
+        return false
+    end
+    return Mission.race.countdown_active == true
 end
 
 return Mission

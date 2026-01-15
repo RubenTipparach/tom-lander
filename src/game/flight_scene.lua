@@ -45,9 +45,10 @@ local softwareImage  -- Only used by software renderer, unused with GPU renderer
 local projMatrix
 local follow_camera = true
 
--- Camera mode: "follow" (default), "free", "focus"
-local camera_mode = "follow"
-local prev_camera_mode = "follow"  -- Track previous mode for smooth transitions
+-- Camera mode: "follow" (default if enabled), "free", "focus"
+-- If follow mode is disabled, default to "free"
+local camera_mode = config.CAMERA_FOLLOW_MODE_ENABLED and "follow" or "free"
+local prev_camera_mode = camera_mode  -- Track previous mode for smooth transitions
 local camera_mode_names = {"follow", "free", "focus"}
 
 -- Camera settings
@@ -251,14 +252,14 @@ function flight_scene.load()
     -- Start mission or race if selected
     if current_mission_num then
         Missions.start(current_mission_num, Mission)
-        -- Start mission-specific music (disabled for now)
-        -- AudioManager.start_level_music(current_mission_num)
+        -- Start mission-specific music
+        AudioManager.start_level_music(current_mission_num)
     elseif current_track_num then
         Missions.start_race_track(current_track_num, Mission)
         -- Racing mode defaults to focus camera (looks at next checkpoint)
         camera_mode = "focus"
-        -- Racing mode uses mission 7 music mapping (disabled for now)
-        -- AudioManager.start_level_music(7)
+        -- Racing mode uses mission 7 music mapping
+        AudioManager.start_level_music(7)
     else
         -- Free flight - no music
     end
@@ -374,8 +375,7 @@ function flight_scene.update(dt)
         ship.vx = 0
         ship.vy = 0
         ship.vz = 0
-        -- Trigger celebration fireworks!
-        Fireworks.celebrate(ship.x, ship.y, ship.z)
+        -- Fireworks triggered after delay (in mission_complete_mode block below)
     end
 
     -- Race victory mode: freeze ship but orbit camera
@@ -418,6 +418,7 @@ function flight_scene.update(dt)
         -- Point camera at ship
         cam.yaw = race_victory_cam_angle + math.pi  -- Face toward ship center
         cam.pitch = 0.2  -- Slight downward angle
+        cam_dist = 0  -- Disable camera distance offset for clean orbit
 
         camera_module.updateVectors(cam)
         profile("update")
@@ -438,34 +439,39 @@ function flight_scene.update(dt)
             thruster.active = true
         end
 
-        -- Update fireworks during victory celebration
-        Fireworks.update(dt)
+        -- 3-second delay before celebration sequence starts
+        local celebration_delay = 3.0
+        if mission_complete_timer > celebration_delay then
+            -- Update fireworks during victory celebration
+            Fireworks.update(dt)
 
-        -- Launch more fireworks periodically during victory
-        if math.random() < dt * 2 then  -- Roughly 2 per second
-            local angle = math.random() * math.pi * 2
-            local dist = 8 + math.random() * 8
-            Fireworks.launch(
-                ship.x + math.sin(angle) * dist,
-                ship.y - 2,
-                ship.z + math.cos(angle) * dist,
-                1.2
-            )
+            -- Launch more fireworks periodically during victory
+            if math.random() < dt * 2 then  -- Roughly 2 per second
+                local angle = math.random() * math.pi * 2
+                local dist = 8 + math.random() * 8
+                Fireworks.launch(
+                    ship.x + math.sin(angle) * dist,
+                    ship.y - 2,
+                    ship.z + math.cos(angle) * dist,
+                    1.2
+                )
+            end
+
+            -- Orbit camera around ship (only after delay)
+            mission_complete_cam_angle = mission_complete_cam_angle + dt * 0.3  -- Slow rotation
+            local orbit_dist = 12  -- Distance from ship
+            local orbit_height = 3  -- Height above ship
+
+            -- Calculate camera position on orbit
+            cam.pos.x = ship.x + math.sin(mission_complete_cam_angle) * orbit_dist
+            cam.pos.y = ship.y + orbit_height
+            cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * orbit_dist
+
+            -- Point camera at ship
+            cam.yaw = mission_complete_cam_angle + math.pi  -- Face toward ship center
+            cam.pitch = 0.2  -- Slight downward angle
+            cam_dist = 0  -- Disable camera distance offset for clean orbit
         end
-
-        -- Orbit camera around ship
-        mission_complete_cam_angle = mission_complete_cam_angle + dt * 0.3  -- Slow rotation
-        local orbit_dist = 12  -- Distance from ship
-        local orbit_height = 3  -- Height above ship
-
-        -- Calculate camera position on orbit
-        cam.pos.x = ship.x + math.sin(mission_complete_cam_angle) * orbit_dist
-        cam.pos.y = ship.y + orbit_height
-        cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * orbit_dist
-
-        -- Point camera at ship
-        cam.yaw = mission_complete_cam_angle + math.pi  -- Face toward ship center
-        cam.pitch = 0.2  -- Slight downward angle
 
         camera_module.updateVectors(cam)
         profile("update")
@@ -558,6 +564,9 @@ function flight_scene.update(dt)
         profile("update")
         return
     end
+
+    -- Disable ship controls during race countdown
+    ship.controls_disabled = Mission.is_race_countdown_active()
 
     -- Update ship physics (only when alive)
     ship:update(dt)
@@ -1526,6 +1535,7 @@ function flight_scene.keypressed(key)
     end
 
     -- Handle F key to cycle camera modes (follow -> free -> focus)
+    -- If follow mode is disabled, cycle only between free and focus
     if key == "f" then
         if camera_mode == "follow" then
             camera_mode = "free"
@@ -1534,9 +1544,15 @@ function flight_scene.keypressed(key)
             camera_mode = "focus"
             print("[CAMERA] Switched to FOCUS mode")
         else
-            camera_mode = "follow"
-            follow_cam_debug_timer = 4.5  -- Print debug soon after switching
-            print("[CAMERA] Switched to FOLLOW mode")
+            -- From focus, go to follow only if enabled, otherwise go to free
+            if config.CAMERA_FOLLOW_MODE_ENABLED then
+                camera_mode = "follow"
+                follow_cam_debug_timer = 4.5  -- Print debug soon after switching
+                print("[CAMERA] Switched to FOLLOW mode")
+            else
+                camera_mode = "free"
+                print("[CAMERA] Switched to FREE mode")
+            end
         end
         return
     end
@@ -1584,8 +1600,8 @@ function flight_scene.keypressed(key)
             Mission.reset()
             if current_mission_num then
                 Missions.start(current_mission_num, Mission)
-                -- Restart mission music (disabled for now)
-                -- AudioManager.start_level_music(current_mission_num)
+                -- Restart mission music
+                AudioManager.start_level_music(current_mission_num)
 
                 -- Reset combat for Mission 7
                 if current_mission_num == 7 then
@@ -1596,8 +1612,8 @@ function flight_scene.keypressed(key)
                 end
             elseif current_track_num then
                 Missions.start_race_track(current_track_num, Mission)
-                -- Restart racing music (disabled for now)
-                -- AudioManager.start_level_music(7)
+                -- Restart racing music
+                AudioManager.start_level_music(7)
             end
         end
 

@@ -404,6 +404,50 @@ function HUD.draw_race_hud(race_data)
         return
     end
 
+    -- Countdown display (3-2-1-GO!)
+    if race_data.countdown_active then
+        local countdown_num = math.ceil(race_data.countdown_timer)
+        local countdown_text = ""
+
+        if countdown_num >= 3 then
+            countdown_text = "3"
+        elseif countdown_num == 2 then
+            countdown_text = "2"
+        elseif countdown_num == 1 then
+            countdown_text = "1"
+        elseif race_data.countdown_timer > 0 then
+            countdown_text = "GO!"
+        end
+
+        if countdown_text ~= "" then
+            -- Big centered countdown number/text
+            local pulse = 0.7 + 0.3 * math.sin(love.timer.getTime() * 10)  -- Fast pulse
+            local scale = 3  -- Big text (3x scale)
+
+            -- Calculate position for centered text
+            local text_width = #countdown_text * 6 * scale
+            local text_x = (screen_w - text_width) / 2
+            local text_y = screen_h / 2 - 20
+
+            -- Color: yellow for numbers, green for GO!
+            local r, g, b
+            if countdown_text == "GO!" then
+                r, g, b = 0, math.floor(255 * pulse), 0
+            else
+                r, g, b = math.floor(255 * pulse), math.floor(255 * pulse), 0
+            end
+
+            renderer.drawText(text_x, text_y, countdown_text, r, g, b, scale, true)
+
+            -- "GET READY!" above the number
+            local ready_text = "GET READY!"
+            local ready_x = (screen_w - #ready_text * 6) / 2
+            renderer.drawText(ready_x, text_y - 30, ready_text,
+                              COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+        end
+        return  -- Don't show timer bar during countdown
+    end
+
     -- Timer bar position (top center of screen)
     local bar_width = 180
     local bar_height = 14
