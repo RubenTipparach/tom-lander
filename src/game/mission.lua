@@ -264,15 +264,13 @@ function Mission.update_race(dt, ship_x, ship_y, ship_z)
     if race.countdown_active then
         race.countdown_timer = race.countdown_timer - dt
 
-        -- Determine what to display
-        local countdown_num = math.ceil(race.countdown_timer)
-        if countdown_num >= 4 then
+        -- Determine what to display (each number for 1 second)
+        -- 4.0-3.0: "3", 3.0-2.0: "2", 2.0-1.0: "1", 1.0-0.0: "GO!"
+        if race.countdown_timer > 3.0 then
             Mission.current_objectives = {"GET READY!", "", "3", "[TAB] Menu"}
-        elseif countdown_num == 3 then
-            Mission.current_objectives = {"GET READY!", "", "3", "[TAB] Menu"}
-        elseif countdown_num == 2 then
+        elseif race.countdown_timer > 2.0 then
             Mission.current_objectives = {"GET READY!", "", "2", "[TAB] Menu"}
-        elseif countdown_num == 1 then
+        elseif race.countdown_timer > 1.0 then
             Mission.current_objectives = {"GET READY!", "", "1", "[TAB] Menu"}
         elseif race.countdown_timer > 0 then
             Mission.current_objectives = {"", "", "GO!", "[TAB] Menu"}
@@ -734,7 +732,9 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
             local checkpoint_height = race.checkpoint_height or 4
             local ring_bottom = ring_center_y - checkpoint_height
             local ring_top = ring_center_y + checkpoint_height
-            local pillar_extend = 6  -- How far pillars extend above/below ring
+            -- Pillars extend from y=0 to y=30 to show checkpoint height clearly
+            local pillar_bottom_y = 0   -- Always at absolute y=0
+            local pillar_top_y = 30     -- Always at absolute y=30 (beacon height)
             local segments = 12
             local pillar_segments = 4  -- Fewer segments for narrow pillars
 
@@ -788,11 +788,8 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
                 end
             end
 
-            -- Draw narrow pillars extending above and below (current checkpoint only)
+            -- Draw narrow pillars extending from y=0 to y=30 (current checkpoint only)
             if i == race.current_checkpoint then
-                local pillar_top = ring_top + pillar_extend
-                local pillar_bottom = math.max(ground_y + 0.5, ring_bottom - pillar_extend)
-
                 for seg = 1, pillar_segments do
                     local angle1 = (seg - 1) * (2 * math.pi / pillar_segments)
                     local angle2 = seg * (2 * math.pi / pillar_segments)
@@ -802,30 +799,30 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
                     local px2 = cp.x + math.cos(angle2) * pillar_radius
                     local pz2 = cp.z + math.sin(angle2) * pillar_radius
 
-                    -- Upper pillar ring
+                    -- Upper pillar ring (at y=30)
                     renderer.drawLine3D(
-                        {px1, pillar_top, pz1},
-                        {px2, pillar_top, pz2},
+                        {px1, pillar_top_y, pz1},
+                        {px2, pillar_top_y, pz2},
                         r, g, b, false
                     )
 
-                    -- Upper pillar verticals
+                    -- Upper pillar verticals (from ring_top to y=30)
                     renderer.drawLine3D(
                         {px1, ring_top, pz1},
-                        {px1, pillar_top, pz1},
+                        {px1, pillar_top_y, pz1},
                         r, g, b, false
                     )
 
-                    -- Lower pillar ring
+                    -- Lower pillar ring (at y=0)
                     renderer.drawLine3D(
-                        {px1, pillar_bottom, pz1},
-                        {px2, pillar_bottom, pz2},
+                        {px1, pillar_bottom_y, pz1},
+                        {px2, pillar_bottom_y, pz2},
                         r, g, b, false
                     )
 
-                    -- Lower pillar verticals
+                    -- Lower pillar verticals (from y=0 to ring_bottom)
                     renderer.drawLine3D(
-                        {px1, pillar_bottom, pz1},
+                        {px1, pillar_bottom_y, pz1},
                         {px1, ring_bottom, pz1},
                         r, g, b, false
                     )

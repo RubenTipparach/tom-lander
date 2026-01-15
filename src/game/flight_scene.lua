@@ -80,6 +80,7 @@ local weapons_enabled = true  -- Toggle with T key
 local race_victory_mode = false
 local race_victory_cam_angle = 0  -- Camera orbit angle around ship
 local race_victory_ship_pos = {x = 0, y = 0, z = 0}  -- Frozen ship position
+local race_victory_timer = 0  -- Timer for 3-second delay before camera orbit
 
 -- Mission complete celebration state (non-race missions)
 local mission_complete_mode = false
@@ -359,89 +360,49 @@ function flight_scene.update(dt)
         race_victory_mode = true
         race_victory_cam_angle = cam.yaw  -- Start from current camera angle
         race_victory_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
-        -- Zero out ship velocity to freeze it
-        ship.vx = 0
-        ship.vy = 0
-        ship.vz = 0
+        race_victory_timer = 0
+        -- Ship becomes invulnerable but gameplay continues for 3 seconds
+        ship.invulnerable = true
     end
 
-    -- Check if non-race mission just completed - enter mission complete mode
+    -- Check if non-race mission just completed - start victory sequence
     if Mission.is_complete() and not race_victory_mode and not mission_complete_mode and Mission.type ~= "race" then
         mission_complete_mode = true
         mission_complete_cam_angle = cam.yaw  -- Start from current camera angle
         mission_complete_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
         mission_complete_timer = 0
-        -- Zero out ship velocity to freeze it
-        ship.vx = 0
-        ship.vy = 0
-        ship.vz = 0
-        -- Fireworks triggered after delay (in mission_complete_mode block below)
+        -- Ship becomes invulnerable but gameplay continues for 3 seconds
+        ship.invulnerable = true
     end
 
-    -- Race victory mode: freeze ship but orbit camera
+    -- Race victory mode: 3-second delay then freeze ship and orbit camera
     if race_victory_mode then
-        -- Keep ship frozen at victory position
-        ship.x = race_victory_ship_pos.x
-        ship.y = race_victory_ship_pos.y
-        ship.z = race_victory_ship_pos.z
+        race_victory_timer = race_victory_timer + dt
 
-        -- Keep thrusters active for flame animation (gentle hover effect)
-        for _, thruster in ipairs(ship.thrusters) do
-            thruster.active = true
-        end
-
-        -- Update fireworks during victory celebration
-        Fireworks.update(dt)
-
-        -- Launch more fireworks periodically during victory
-        if math.random() < dt * 2 then  -- Roughly 2 per second
-            local angle = math.random() * math.pi * 2
-            local dist = 8 + math.random() * 8
-            Fireworks.launch(
-                ship.x + math.sin(angle) * dist,
-                ship.y - 2,
-                ship.z + math.cos(angle) * dist,
-                1.2
-            )
-        end
-
-        -- Orbit camera around ship
-        race_victory_cam_angle = race_victory_cam_angle + dt * 0.3  -- Slow rotation
-        local orbit_dist = 12  -- Distance from ship
-        local orbit_height = 3  -- Height above ship
-
-        -- Calculate camera position on orbit
-        cam.pos.x = ship.x + math.sin(race_victory_cam_angle) * orbit_dist
-        cam.pos.y = ship.y + orbit_height
-        cam.pos.z = ship.z + math.cos(race_victory_cam_angle) * orbit_dist
-
-        -- Point camera at ship
-        cam.yaw = race_victory_cam_angle + math.pi  -- Face toward ship center
-        cam.pitch = 0.2  -- Slight downward angle
-        cam_dist = 0  -- Disable camera distance offset for clean orbit
-
-        camera_module.updateVectors(cam)
-        profile("update")
-        return
-    end
-
-    -- Mission complete mode: freeze ship but orbit camera (non-race missions)
-    if mission_complete_mode then
-        mission_complete_timer = mission_complete_timer + dt
-
-        -- Keep ship frozen at victory position
-        ship.x = mission_complete_ship_pos.x
-        ship.y = mission_complete_ship_pos.y
-        ship.z = mission_complete_ship_pos.z
-
-        -- Keep thrusters active for flame animation (gentle hover effect)
-        for _, thruster in ipairs(ship.thrusters) do
-            thruster.active = true
-        end
-
-        -- 3-second delay before celebration sequence starts
+        -- 3-second delay: gameplay continues normally, ship just invulnerable
         local celebration_delay = 3.0
-        if mission_complete_timer > celebration_delay then
+        if race_victory_timer <= celebration_delay then
+            -- During delay: update saved ship position for when we freeze it
+            race_victory_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
+            -- Normal update continues (no early return)
+        else
+            -- AFTER delay: freeze ship and orbit camera
+            -- Disable camera distance offset for clean orbit
+            cam_dist = 0
+
+            -- Freeze ship at saved victory position
+            ship.x = race_victory_ship_pos.x
+            ship.y = race_victory_ship_pos.y
+            ship.z = race_victory_ship_pos.z
+            ship.vx = 0
+            ship.vy = 0
+            ship.vz = 0
+
+            -- Keep thrusters active for flame animation
+            for _, thruster in ipairs(ship.thrusters) do
+                thruster.active = true
+            end
+
             -- Update fireworks during victory celebration
             Fireworks.update(dt)
 
@@ -457,7 +418,76 @@ function flight_scene.update(dt)
                 )
             end
 
-            -- Orbit camera around ship (only after delay)
+            -- Orbit camera around ship
+            race_victory_cam_angle = race_victory_cam_angle + dt * 0.3  -- Slow rotation
+            local orbit_dist = 12  -- Distance from ship
+            local orbit_height = 3  -- Height above ship
+
+            -- Calculate camera position on orbit
+            cam.pos.x = ship.x + math.sin(race_victory_cam_angle) * orbit_dist
+            cam.pos.y = ship.y + orbit_height
+            cam.pos.z = ship.z + math.cos(race_victory_cam_angle) * orbit_dist
+
+            -- Point camera at ship (use same formula as focus camera)
+            local dx = ship.x - cam.pos.x
+            local dz = ship.z - cam.pos.z
+            local dy = ship.y - cam.pos.y
+            local dist_xz = math.sqrt(dx * dx + dz * dz)
+            cam.yaw = math.atan2(dx, -dz)
+            -- Calculate pitch to look at ship, clamped to ±90 degrees
+            local max_pitch = math.pi / 2 - 0.01
+            cam.pitch = math.max(-max_pitch, math.min(max_pitch, math.atan2(dy, dist_xz)))
+
+            camera_module.updateVectors(cam)
+            profile("update")
+            return  -- Only return early AFTER the delay
+        end
+    end
+
+    -- Mission complete mode: 3-second delay then freeze ship and orbit camera
+    if mission_complete_mode then
+        mission_complete_timer = mission_complete_timer + dt
+
+        -- 3-second delay: gameplay continues normally, ship just invulnerable
+        local celebration_delay = 3.0
+        if mission_complete_timer <= celebration_delay then
+            -- During delay: update saved ship position for when we freeze it
+            mission_complete_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
+            -- Normal update continues (no early return)
+        else
+            -- AFTER delay: freeze ship and orbit camera
+            -- Disable camera distance offset for clean orbit
+            cam_dist = 0
+
+            -- Freeze ship at saved victory position
+            ship.x = mission_complete_ship_pos.x
+            ship.y = mission_complete_ship_pos.y
+            ship.z = mission_complete_ship_pos.z
+            ship.vx = 0
+            ship.vy = 0
+            ship.vz = 0
+
+            -- Keep thrusters active for flame animation
+            for _, thruster in ipairs(ship.thrusters) do
+                thruster.active = true
+            end
+
+            -- Update fireworks during victory celebration
+            Fireworks.update(dt)
+
+            -- Launch more fireworks periodically during victory
+            if math.random() < dt * 2 then  -- Roughly 2 per second
+                local angle = math.random() * math.pi * 2
+                local dist = 8 + math.random() * 8
+                Fireworks.launch(
+                    ship.x + math.sin(angle) * dist,
+                    ship.y - 2,
+                    ship.z + math.cos(angle) * dist,
+                    1.2
+                )
+            end
+
+            -- Orbit camera around ship
             mission_complete_cam_angle = mission_complete_cam_angle + dt * 0.3  -- Slow rotation
             local orbit_dist = 12  -- Distance from ship
             local orbit_height = 3  -- Height above ship
@@ -467,15 +497,20 @@ function flight_scene.update(dt)
             cam.pos.y = ship.y + orbit_height
             cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * orbit_dist
 
-            -- Point camera at ship
-            cam.yaw = mission_complete_cam_angle + math.pi  -- Face toward ship center
-            cam.pitch = 0.2  -- Slight downward angle
-            cam_dist = 0  -- Disable camera distance offset for clean orbit
-        end
+            -- Point camera at ship (use same formula as focus camera)
+            local dx = ship.x - cam.pos.x
+            local dz = ship.z - cam.pos.z
+            local dy = ship.y - cam.pos.y
+            local dist_xz = math.sqrt(dx * dx + dz * dz)
+            cam.yaw = math.atan2(dx, -dz)
+            -- Calculate pitch to look at ship, clamped to ±90 degrees
+            local max_pitch = math.pi / 2 - 0.01
+            cam.pitch = math.max(-max_pitch, math.min(max_pitch, math.atan2(dy, dist_xz)))
 
-        camera_module.updateVectors(cam)
-        profile("update")
-        return
+            camera_module.updateVectors(cam)
+            profile("update")
+            return  -- Only return early AFTER the delay
+        end
     end
 
     -- Check for ship death FIRST (before physics update)
@@ -682,13 +717,13 @@ function flight_scene.update(dt)
     local landing_height = ground_height + ship_ground_offset
 
     if ship.y < landing_height then
-        -- Check for water collision (instant death)
-        if Heightmap.is_water(ship.x, ship.z) then
+        -- Check for water collision (instant death) - skip if invulnerable
+        if Heightmap.is_water(ship.x, ship.z) and not ship.invulnerable then
             -- Water collision = instant death explosion
             Explosion.spawn_death(ship.x, ship.y, ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
             AudioManager.play_sfx(3)  -- Explosion sound
             ship.health = 0  -- Kill the ship
-        else
+        elseif not Heightmap.is_water(ship.x, ship.z) then
             local vertical_speed = math.abs(ship.vy)
             local horizontal_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
 
@@ -1092,9 +1127,10 @@ function flight_scene.update(dt)
             while yaw_diff < -math.pi do yaw_diff = yaw_diff + math.pi * 2 end
             cam.yaw = cam.yaw + yaw_diff * 0.1 * timeScale
 
-            -- Target pitch (vertical angle)
+            -- Target pitch (vertical angle) - clamp to ±90 degrees
             local target_pitch = math.atan2(dy, dist_xz)
-            target_pitch = math.max(-1.2, math.min(1.2, target_pitch))
+            local max_pitch = math.pi / 2 - 0.01  -- Just under 90 degrees to avoid gimbal lock
+            target_pitch = math.max(-max_pitch, math.min(max_pitch, target_pitch))
             cam.pitch = cam.pitch + (target_pitch - cam.pitch) * 0.1 * timeScale
         else
             -- No target - fall back to follow mode behavior
@@ -1319,7 +1355,8 @@ function flight_scene.draw()
     renderer.flush3D()
 
     -- Draw 3D guide arrow for missions (anchored to camera pivot, depth tested against geometry)
-    if Mission.is_active() then
+    -- Skip guide arrow in focus mode (camera already points at target)
+    if Mission.is_active() and camera_mode ~= "focus" then
         -- For combat mode (Mission 7): only draw arrow if there's a selected target
         -- For other missions: draw normal guide arrow
         if combat_active then
@@ -1331,7 +1368,9 @@ function flight_scene.draw()
         else
             Mission.draw_guide_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
         end
-        -- Draw 3D checkpoint markers for race mode
+    end
+    -- Draw 3D checkpoint markers for race mode (always show, even in focus mode)
+    if Mission.is_active() then
         Mission.draw_checkpoints(renderer, Heightmap, cam.pos.x, cam.pos.z)
     end
 
@@ -1473,7 +1512,10 @@ function flight_scene.keypressed(key)
     if Mission.is_complete() and key == "q" then
         Mission.reset()
         race_victory_mode = false  -- Reset victory mode
+        race_victory_timer = 0
         mission_complete_mode = false  -- Reset mission complete mode
+        mission_complete_timer = 0
+        ship.invulnerable = false  -- Reset invulnerability
         Fireworks.reset()  -- Clear fireworks
         if combat_active then
             Aliens.reset()
@@ -1492,7 +1534,10 @@ function flight_scene.keypressed(key)
             HUD.close_pause()
             Mission.reset()
             race_victory_mode = false  -- Reset victory mode
+            race_victory_timer = 0
             mission_complete_mode = false  -- Reset mission complete mode
+            mission_complete_timer = 0
+            ship.invulnerable = false  -- Reset invulnerability
             Fireworks.reset()  -- Clear fireworks
             if combat_active then
                 Aliens.reset()
@@ -1592,7 +1637,10 @@ function flight_scene.keypressed(key)
 
         -- Reset victory mode and fireworks
         race_victory_mode = false
+        race_victory_timer = 0
         mission_complete_mode = false
+        mission_complete_timer = 0
+        ship.invulnerable = false  -- Reset invulnerability
         Fireworks.reset()
 
         -- Reset mission or race if active

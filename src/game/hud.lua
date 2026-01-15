@@ -406,14 +406,15 @@ function HUD.draw_race_hud(race_data)
 
     -- Countdown display (3-2-1-GO!)
     if race_data.countdown_active then
-        local countdown_num = math.ceil(race_data.countdown_timer)
         local countdown_text = ""
 
-        if countdown_num >= 3 then
+        -- Show each number for 1 second:
+        -- 4.0-3.0: "3", 3.0-2.0: "2", 2.0-1.0: "1", 1.0-0.0: "GO!"
+        if race_data.countdown_timer > 3.0 then
             countdown_text = "3"
-        elseif countdown_num == 2 then
+        elseif race_data.countdown_timer > 2.0 then
             countdown_text = "2"
-        elseif countdown_num == 1 then
+        elseif race_data.countdown_timer > 1.0 then
             countdown_text = "1"
         elseif race_data.countdown_timer > 0 then
             countdown_text = "GO!"

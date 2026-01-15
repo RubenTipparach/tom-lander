@@ -480,6 +480,10 @@ end
 
 -- Take damage (triggers temporary blink effect)
 function Ship:take_damage(amount)
+    -- Skip damage if invulnerable (e.g., during mission complete)
+    if self.invulnerable then
+        return
+    end
     self.health = self.health - amount
     if self.health < 0 then
         self.health = 0
