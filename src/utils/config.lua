@@ -35,7 +35,7 @@ config.SET_CLEAR_COLOR = false  -- Set to true to call setClearColor in flight_s
 -- DEBUG / DEV SETTINGS
 -- ===========================================
 config.UNLOCK_ALL_MISSIONS = true  -- Set to true to unlock all missions (dev mode)
-config.COMBAT_DEBUG = true         -- Set to true to show basic combat debug (facing + velocity arrows)
+config.COMBAT_DEBUG = false         -- Set to true to show basic combat debug (facing + velocity arrows)
 config.COMBAT_DEBUG_DETAILED = false  -- Set to true to show detailed debug (bounding boxes, axes, target lines)
 config.CAMERA_DEBUG = false        -- Set to true to print camera debug info every 5 seconds
 
@@ -235,5 +235,81 @@ config.SHADOW_CASCADE_ENABLED = true         -- Enable cascaded shadow maps
 config.SHADOW_CASCADE_SPLIT = 15             -- Distance where near cascade ends and far begins
 config.SHADOW_NEAR_COVERAGE = 20             -- Near cascade coverage (smaller = higher quality close shadows)
 config.SHADOW_FAR_COVERAGE = 120             -- Far cascade coverage (larger = shadows visible further)
+
+-- ===========================================
+-- FIREWORKS SETTINGS
+-- ===========================================
+config.FIREWORK_MAX_SPARKS = 500             -- Maximum sparks allowed
+config.FIREWORK_ROCKET_VELOCITY = 15         -- Base upward velocity
+config.FIREWORK_ROCKET_VELOCITY_VAR = 10     -- Velocity variation
+config.FIREWORK_ROCKET_LIFETIME = 0.8        -- Base time before explosion
+config.FIREWORK_ROCKET_LIFETIME_VAR = 0.4    -- Lifetime variation
+config.FIREWORK_SPARK_COUNT = 30             -- Sparks per explosion
+config.FIREWORK_SPARK_SPEED = 8              -- Spark explosion speed
+config.FIREWORK_SPARK_LIFETIME = 1.0         -- Spark lifetime
+config.FIREWORK_SPARK_LIFETIME_VAR = 0.5     -- Spark lifetime variation
+config.FIREWORK_GRAVITY = 15                 -- Gravity affecting sparks
+
+-- Firework color palette (RGB values 0-255)
+config.FIREWORK_COLORS = {
+    {255, 100, 100},   -- Red
+    {100, 255, 100},   -- Green
+    {100, 100, 255},   -- Blue
+    {255, 255, 100},   -- Yellow
+    {255, 100, 255},   -- Magenta
+    {100, 255, 255},   -- Cyan
+    {255, 200, 100},   -- Orange
+    {255, 255, 255},   -- White
+}
+
+-- ===========================================
+-- VICTORY CAMERA SETTINGS
+-- ===========================================
+config.VICTORY_DELAY = 3.0                   -- Seconds before camera orbit starts
+config.VICTORY_ORBIT_DISTANCE = 12           -- Camera distance from ship
+config.VICTORY_ORBIT_HEIGHT = 1              -- Camera height above ship
+config.VICTORY_ORBIT_SPEED = 0.3             -- Camera rotation speed (radians per second)
+config.VICTORY_FIREWORK_RATE = 2             -- Fireworks launched per second during celebration
+
+-- ===========================================
+-- MAP CONFIGURATIONS
+-- ===========================================
+-- Map definitions: each map has size, image path, terrain rules, spawn point
+config.MAPS = {
+    -- Act 1: Original island map (128x128)
+    act1 = {
+        name = "Island",
+        image = "assets/textures/64.png",       -- Heightmap image path
+        width = 128,                             -- Map width in tiles
+        height = 128,                            -- Map height in tiles
+        has_water = true,                        -- Water at height 0
+        has_grass = true,                        -- Use grass texture
+        spawn_aseprite = {64, 64},               -- Player spawn in aseprite coords
+        landing_pads = nil,                      -- Use hardcoded pads (legacy, matching Picotron)
+        edge_walls = nil,                        -- No edge walls
+    },
+    -- Act 2: Desert canyon map (128x256)
+    act2 = {
+        name = "Desert Canyon",
+        image = "assets/map_act_2.png",          -- Heightmap image path
+        width = 128,                             -- Map width in tiles
+        height = 256,                            -- Map height in tiles (tall map)
+        has_water = false,                       -- No water - all sand
+        has_grass = false,                       -- No grass - use sand
+        spawn_aseprite = {41, 264},              -- Player spawn in aseprite coords
+        landing_pads = {                         -- Landing pad positions (aseprite coords)
+            {x = 41, z = 264, id = 1},
+        },
+        edge_walls = {                           -- Wall extrusion on edges
+            east = {height = 25},                -- East edge wall (height in heightmap units)
+            west = {height = 25},                -- West edge wall
+        },
+        altitude_limit = 30,                     -- Max altitude in world units (300m displayed)
+        altitude_warning_time = 10,              -- Seconds before ship explodes when over limit
+    },
+}
+
+-- Current active map (can be changed at runtime)
+config.CURRENT_MAP = "act1"
 
 return config

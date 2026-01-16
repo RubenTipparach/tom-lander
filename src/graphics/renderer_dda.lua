@@ -1214,6 +1214,13 @@ function renderer_dda.drawText(x, y, text, r, g, b, scale, shadow)
     return font:getWidth(text)
 end
 
+-- Get text width for a given string and scale
+function renderer_dda.getTextWidth(text, scale)
+    scale = scale or 1
+    local font = fonts.get(getFontSize(scale))
+    return font:getWidth(text)
+end
+
 -- Cached software image for presentation
 local softwareImage = nil
 

@@ -42,6 +42,9 @@ local COLOR_CYAN = {0x29, 0xad, 0xff}       -- 12: Cyan/blue
 local show_controls = true
 local current_mission = 1
 
+-- Goal box visibility (press G to toggle, default shown for tutorial missions 1-2)
+local show_goal_box = true
+
 -- Pause menu state
 local show_pause_menu = false
 
@@ -53,15 +56,39 @@ function HUD.init(r)
     renderer = r
 end
 
--- Set current mission number (affects control hints visibility)
+-- Helper: get text width using renderer
+local function getTextWidth(text, scale)
+    if renderer and renderer.getTextWidth then
+        return renderer.getTextWidth(text, scale or 1)
+    end
+    -- Fallback: approximate 5 pixels per character at scale 1
+    return #text * 5 * (scale or 1)
+end
+
+-- Helper: get X position to center text on screen
+local function centerTextX(text, scale)
+    local width = getTextWidth(text, scale)
+    return (config.RENDER_WIDTH - width) / 2
+end
+
+-- Set current mission number (affects control hints and goal box visibility)
 function HUD.set_mission(mission_num)
     current_mission = mission_num
+    -- Default: controls hidden (C to toggle), goals shown (G to toggle)
+    show_controls = false
+    show_goal_box = true
 end
 
 -- Toggle control hints
 function HUD.toggle_controls()
     show_controls = not show_controls
     return show_controls
+end
+
+-- Toggle goal box visibility
+function HUD.toggle_goal_box()
+    show_goal_box = not show_goal_box
+    return show_goal_box
 end
 
 -- Toggle pause menu
@@ -119,13 +146,17 @@ end
 
 -- Draw 3D compass with altitude and speed
 function HUD.draw_compass(ship, camera, mission_target)
-    -- Black box background for compass, altitude, and speed
+    -- Black box background for compass, altitude, and speed (centered on screen)
     local box_width = 115
     local box_height = 30
-    local box_x1 = COMPASS_X - box_width / 2 + 27
-    local box_x2 = COMPASS_X + box_width / 2 + 27
+    local screen_center = config.RENDER_WIDTH / 2
+    local box_x1 = screen_center - box_width / 2
+    local box_x2 = screen_center + box_width / 2
     local box_y1 = COMPASS_Y - box_height / 2
     local box_y2 = COMPASS_Y + box_height / 2
+
+    -- Compass dial position (left side of box)
+    local compass_x = box_x1 + 25
 
     renderer.drawRectFill(box_x1, box_y1, box_x2, box_y2,
                           COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3])
@@ -160,7 +191,7 @@ function HUD.draw_compass(ship, camera, mission_target)
 
         -- Project to screen (orthographic)
         projected_points[i] = {
-            x = COMPASS_X + x_yaw,
+            x = compass_x + x_yaw,
             y = COMPASS_Y + y_pitch,
             z = z_pitch  -- Store depth for sorting
         }
@@ -189,14 +220,14 @@ function HUD.draw_compass(ship, camera, mission_target)
     end
 
     -- Center dot (drawn last, always on top)
-    renderer.drawCircleFill(COMPASS_X, COMPASS_Y, 2,
+    renderer.drawCircleFill(compass_x, COMPASS_Y, 2,
                             COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3])
-    renderer.drawCircle(COMPASS_X, COMPASS_Y, 2,
+    renderer.drawCircle(compass_x, COMPASS_Y, 2,
                         COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3])
 
     -- Altitude counter (1 world unit = 10 meters)
     local altitude_meters = (ship.y or 0) * 10
-    renderer.drawText(COMPASS_X + 20, COMPASS_Y - 8,
+    renderer.drawText(compass_x + 20, COMPASS_Y - 8,
                       "ALT: " .. math.floor(altitude_meters) .. "m",
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
 
@@ -205,7 +236,7 @@ function HUD.draw_compass(ship, camera, mission_target)
     local vy = ship.vy or 0
     local vz = ship.vz or 0
     local speed = math.sqrt(vx*vx + vy*vy + vz*vz) * 100  -- Convert to m/s (1 unit = 100m)
-    renderer.drawText(COMPASS_X + 20, COMPASS_Y + 2,
+    renderer.drawText(compass_x + 20, COMPASS_Y + 2,
                       "SPD: " .. math.floor(speed) .. "m/s",
                       COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
 end
@@ -259,8 +290,11 @@ function HUD.draw_controls(game_mode)
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
 end
 
--- Draw mission panel (top-left objectives box)
+-- Draw mission panel (top-left objectives - text only, no box)
 function HUD.draw_mission_panel(mission)
+    -- Don't draw if goal box is hidden
+    if not show_goal_box then return end
+
     -- mission should have: name, objectives (array of strings)
     if not mission then
         -- Draw placeholder when no mission
@@ -268,34 +302,16 @@ function HUD.draw_mission_panel(mission)
             name = "FREE FLIGHT",
             objectives = {
                 "Explore the terrain",
-                "Practice landing on pads",
-                "[ESC] Return to menu"
+                "Practice landing on pads"
             }
         }
     end
 
     local objectives = mission.objectives or {}
     local line_height = 8
-
-    -- Calculate box height based on content
-    local box_height = 8  -- Top padding
-    if mission.name and mission.name ~= "" then
-        box_height = box_height + 10  -- Mission name + spacing
-    end
-    box_height = box_height + #objectives * line_height + 4  -- Objectives + bottom padding
-
-    -- Draw semi-transparent background
-    renderer.drawRectFill(MISSION_BOX_X, MISSION_BOX_Y,
-                          MISSION_BOX_X + MISSION_BOX_WIDTH, MISSION_BOX_Y + box_height,
-                          COLOR_DARK_BLUE[1], COLOR_DARK_BLUE[2], COLOR_DARK_BLUE[3], 200)
-
-    -- Draw border
-    renderer.drawRect(MISSION_BOX_X, MISSION_BOX_Y,
-                      MISSION_BOX_X + MISSION_BOX_WIDTH, MISSION_BOX_Y + box_height,
-                      COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3])
+    local text_y = MISSION_BOX_Y + 4
 
     -- Draw mission name header
-    local text_y = MISSION_BOX_Y + 4
     if mission.name and mission.name ~= "" then
         renderer.drawText(MISSION_BOX_X + 4, text_y, mission.name,
                           COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
@@ -312,6 +328,18 @@ function HUD.draw_mission_panel(mission)
                           color[1], color[2], color[3], 1, true)
         text_y = text_y + line_height
     end
+
+    -- Draw toggle hint
+    text_y = text_y + 4
+    renderer.drawText(MISSION_BOX_X + 4, text_y, "[G] Toggle Goals",
+                      COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+end
+
+-- Store current mission for pause menu
+local pause_menu_mission = nil
+
+function HUD.set_pause_mission(mission)
+    pause_menu_mission = mission
 end
 
 -- Draw pause menu (centered overlay)
@@ -320,8 +348,19 @@ function HUD.draw_pause_menu()
 
     local screen_w = 480
     local screen_h = 270
-    local box_width = 180
-    local box_height = 85
+    local box_width = 200
+    local line_height = 12
+
+    -- Calculate height based on mission objectives
+    local objectives = (pause_menu_mission and pause_menu_mission.objectives) or {}
+    local num_objectives = 0
+    for _, obj in ipairs(objectives) do
+        if obj and obj ~= "" and not obj:match("^%[") then
+            num_objectives = num_objectives + 1
+        end
+    end
+
+    local box_height = 95 + (num_objectives * line_height)
     local box_x = (screen_w - box_width) / 2
     local box_y = (screen_h - box_height) / 2
 
@@ -339,24 +378,47 @@ function HUD.draw_pause_menu()
 
     -- Title
     local title = "PAUSED"
-    local title_x = box_x + (box_width - #title * 5) / 2
+    local title_x = box_x + (box_width - getTextWidth(title)) / 2
     renderer.drawText(title_x, box_y + 10, title,
                       COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
 
+    local text_y = box_y + 28
+
+    -- Mission name and objectives
+    if pause_menu_mission and pause_menu_mission.name then
+        local name_x = box_x + (box_width - getTextWidth(pause_menu_mission.name)) / 2
+        renderer.drawText(name_x, text_y, pause_menu_mission.name,
+                          COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+        text_y = text_y + line_height
+
+        -- Draw objectives (skip empty lines and hint lines)
+        for _, obj in ipairs(objectives) do
+            if obj and obj ~= "" and not obj:match("^%[") then
+                local obj_x = box_x + (box_width - getTextWidth(obj)) / 2
+                renderer.drawText(obj_x, text_y, obj,
+                                  COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
+                text_y = text_y + line_height
+            end
+        end
+        text_y = text_y + 4
+    end
+
     -- Options
     local option1 = "[Tab] Resume"
-    local option1_x = box_x + (box_width - #option1 * 5) / 2
-    renderer.drawText(option1_x, box_y + 28, option1,
+    local option1_x = box_x + (box_width - getTextWidth(option1)) / 2
+    renderer.drawText(option1_x, text_y, option1,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+    text_y = text_y + line_height
 
     local option2 = "[C] " .. (show_controls and "Hide" or "Show") .. " Controls"
-    local option2_x = box_x + (box_width - #option2 * 5) / 2
-    renderer.drawText(option2_x, box_y + 43, option2,
+    local option2_x = box_x + (box_width - getTextWidth(option2)) / 2
+    renderer.drawText(option2_x, text_y, option2,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+    text_y = text_y + line_height
 
     local option3 = "[Q] Return to Menu"
-    local option3_x = box_x + (box_width - #option3 * 5) / 2
-    renderer.drawText(option3_x, box_y + 58, option3,
+    local option3_x = box_x + (box_width - getTextWidth(option3)) / 2
+    renderer.drawText(option3_x, text_y, option3,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
 end
 
@@ -373,7 +435,7 @@ function HUD.draw_location_name(name, location_type)
         text = name
     end
 
-    local text_x = 240 - (#text * 5) / 2  -- Center horizontally
+    local text_x = centerTextX(text)
     local text_y = 218  -- Above compass
 
     renderer.drawText(text_x, text_y, text,
@@ -426,8 +488,8 @@ function HUD.draw_race_hud(race_data)
             local scale = 3  -- Big text (3x scale)
 
             -- Calculate position for centered text
-            local text_width = #countdown_text * 6 * scale
-            local text_x = (screen_w - text_width) / 2
+            local text_width = getTextWidth(countdown_text, scale)
+            local text_x = (config.RENDER_WIDTH - text_width) / 2
             local text_y = screen_h / 2 - 20
 
             -- Color: yellow for numbers, green for GO!
@@ -442,7 +504,7 @@ function HUD.draw_race_hud(race_data)
 
             -- "GET READY!" above the number
             local ready_text = "GET READY!"
-            local ready_x = (screen_w - #ready_text * 6) / 2
+            local ready_x = centerTextX(ready_text)
             renderer.drawText(ready_x, text_y - 30, ready_text,
                               COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
         end
@@ -486,13 +548,13 @@ function HUD.draw_race_hud(race_data)
 
     -- Timer text (centered on bar)
     local timer_text = string.format("%.1f", math.max(0, race_data.checkpoint_timer))
-    local text_x = bar_x + (bar_width - #timer_text * 6) / 2
+    local text_x = bar_x + (bar_width - getTextWidth(timer_text)) / 2
     renderer.drawText(text_x, bar_y + 3, timer_text,
                       COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
 
     -- Lap counter (left side of timer bar)
     local lap_text = "LAP " .. race_data.current_lap .. "/" .. race_data.total_laps
-    renderer.drawText(bar_x - #lap_text * 6 - 8, bar_y + 3, lap_text,
+    renderer.drawText(bar_x - getTextWidth(lap_text) - 8, bar_y + 3, lap_text,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
 
     -- Total time (right side of timer bar)
@@ -506,7 +568,7 @@ function HUD.draw_race_hud(race_data)
     if race_data.checkpoint_flash and race_data.checkpoint_flash > 0 then
         -- Flash "CHECKPOINT!" text
         local flash_text = "CHECKPOINT!"
-        local flash_x = (screen_w - #flash_text * 6) / 2
+        local flash_x = centerTextX(flash_text)
         renderer.drawText(flash_x, bar_y + bar_height + 6, flash_text,
                           COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
     end
@@ -514,7 +576,7 @@ function HUD.draw_race_hud(race_data)
     -- Failed state (below timer bar)
     if race_data.failed then
         local fail_text = "TIME'S UP!"
-        local fail_x = (screen_w - #fail_text * 6) / 2
+        local fail_x = centerTextX(fail_text)
         -- Flash the text
         if math.floor(love.timer.getTime() * 4) % 2 == 0 then
             renderer.drawText(fail_x, bar_y + bar_height + 6, fail_text,
@@ -531,7 +593,7 @@ function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
     -- "RACE COMPLETE!" header with pulsing effect
     local pulse = 0.7 + 0.3 * math.sin(love.timer.getTime() * 4)
     local header_text = "RACE COMPLETE!"
-    local header_x = center_x - (#header_text * 6) / 2
+    local header_x = centerTextX(header_text)
     renderer.drawText(header_x, start_y, header_text,
                       math.floor(255 * pulse), math.floor(255 * pulse), 0, 1, true)
 
@@ -539,7 +601,7 @@ function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
     local total_minutes = math.floor(race_data.total_time / 60)
     local total_seconds = race_data.total_time % 60
     local total_text = "TOTAL: " .. string.format("%d:%05.2f", total_minutes, total_seconds)
-    local total_x = center_x - (#total_text * 6) / 2
+    local total_x = centerTextX(total_text)
     renderer.drawText(total_x, start_y + 20, total_text,
                       COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
 
@@ -559,7 +621,7 @@ function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
             lap_text = lap_text .. " BEST"
         end
 
-        local lap_x = center_x - (#lap_text * 5) / 2
+        local lap_x = centerTextX(lap_text)
         renderer.drawText(lap_x, lap_y, lap_text,
                           color[1], color[2], color[3], 1, true)
         lap_y = lap_y + 12
@@ -567,7 +629,7 @@ function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
 
     -- "Press Q to return" at bottom
     local return_text = "[Q] RETURN TO MENU"
-    local return_x = center_x - (#return_text * 5) / 2
+    local return_x = centerTextX(return_text)
     renderer.drawText(return_x, screen_h - 30, return_text,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
 end
@@ -666,8 +728,8 @@ function HUD.draw(ship, camera, opts)
     end
 
     -- Draw thruster indicator (WASD keys showing which thrusters are firing)
-    -- Skip when paused so pause menu isn't obscured
-    if not show_pause_menu then
+    -- Skip when paused or during victory sequence
+    if not show_pause_menu and not opts.victory_mode then
         HUD.draw_thruster_indicator(ship)
     end
 
@@ -676,7 +738,13 @@ function HUD.draw(ship, camera, opts)
         HUD.draw_camera_mode(opts.camera_mode)
     end
 
-    -- Draw pause menu on top of everything
+    -- Draw altitude warning (big flashing countdown in center of screen)
+    if opts.altitude_warning and opts.altitude_timer then
+        HUD.draw_altitude_warning(opts.altitude_timer)
+    end
+
+    -- Store mission for pause menu and draw pause menu on top of everything
+    pause_menu_mission = opts.mission
     HUD.draw_pause_menu()
 end
 
@@ -686,7 +754,7 @@ function HUD.draw_camera_mode(mode)
     local screen_h = config.RENDER_HEIGHT
 
     local mode_text = "[F] CAM: " .. string.upper(mode)
-    local text_x = screen_w - #mode_text * 6 - 10
+    local text_x = screen_w - getTextWidth(mode_text) - 10
     local text_y = screen_h - 45
 
     -- Color based on mode
@@ -702,24 +770,121 @@ function HUD.draw_camera_mode(mode)
     renderer.drawText(text_x, text_y, mode_text, color[1], color[2], color[3], 1, true)
 end
 
+-- Draw altitude warning - big flashing countdown when over altitude limit
+function HUD.draw_altitude_warning(timer)
+    local screen_w = config.RENDER_WIDTH
+    local screen_h = config.RENDER_HEIGHT
+
+    -- Get countdown number (ceiling so 4.1 shows as 5)
+    local countdown = math.ceil(timer)
+    if countdown < 1 then countdown = 1 end
+
+    -- Flash effect - alternate between red and yellow
+    local flash = (love.timer.getTime() * 8) % 1 < 0.5
+    local color = flash and {255, 50, 50} or {255, 200, 0}
+
+    -- Draw warning text
+    local warning_text = "ALTITUDE WARNING"
+    local warning_width = getTextWidth(warning_text, 1)
+    local warning_x = centerTextX(warning_text, 1)
+    local warning_y = screen_h / 2 - 40
+
+    renderer.drawText(warning_x, warning_y, warning_text, color[1], color[2], color[3], 1, true)
+
+    -- Draw big countdown number (scale 3x)
+    local num_text = tostring(countdown)
+    local num_width = getTextWidth(num_text, 3)
+    local num_x = math.floor((screen_w - num_width) / 2)
+    local num_y = screen_h / 2 - 10
+
+    renderer.drawText(num_x, num_y, num_text, color[1], color[2], color[3], 3, true)
+
+    -- Draw instruction
+    local instruction = "REDUCE ALTITUDE!"
+    local inst_x = centerTextX(instruction, 1)
+    local inst_y = screen_h / 2 + 30
+
+    renderer.drawText(inst_x, inst_y, instruction, color[1], color[2], color[3], 1, true)
+end
+
 -- Targeting system state
 local current_target_index = 0
 local current_target = nil
+local last_target_press_time = 0
+local TARGET_CYCLE_WINDOW = 2.0  -- Seconds to cycle to next closest
 
--- Cycle to next target in list
-function HUD.cycle_target(enemies)
+-- Helper: sort enemies by distance to ship
+local function sort_enemies_by_distance(enemies, ship_x, ship_z)
+    local sorted = {}
+    for i, enemy in ipairs(enemies) do
+        local dx = enemy.x - ship_x
+        local dz = enemy.z - ship_z
+        local dist = math.sqrt(dx * dx + dz * dz)
+        table.insert(sorted, {enemy = enemy, dist = dist, original_index = i})
+    end
+    table.sort(sorted, function(a, b) return a.dist < b.dist end)
+    return sorted
+end
+
+-- Helper: find closest enemy
+local function find_closest_enemy(enemies, ship_x, ship_z)
+    if not enemies or #enemies == 0 then return nil end
+
+    local closest = nil
+    local closest_dist = math.huge
+
+    for _, enemy in ipairs(enemies) do
+        local dx = enemy.x - ship_x
+        local dz = enemy.z - ship_z
+        local dist = math.sqrt(dx * dx + dz * dz)
+        if dist < closest_dist then
+            closest_dist = dist
+            closest = enemy
+        end
+    end
+
+    return closest
+end
+
+-- Cycle to next target - selects closest first, then cycles by distance
+function HUD.cycle_target(enemies, ship_x, ship_z)
     if not enemies or #enemies == 0 then
         current_target_index = 0
         current_target = nil
         return nil
     end
 
-    current_target_index = current_target_index + 1
-    if current_target_index > #enemies then
+    local current_time = love.timer.getTime()
+    local time_since_last = current_time - last_target_press_time
+    last_target_press_time = current_time
+
+    -- Sort enemies by distance
+    local sorted = sort_enemies_by_distance(enemies, ship_x, ship_z)
+
+    -- If no target or pressed after cycle window, select closest
+    if not current_target or time_since_last > TARGET_CYCLE_WINDOW then
+        current_target = sorted[1].enemy
         current_target_index = 1
+        return current_target
     end
 
-    current_target = enemies[current_target_index]
+    -- Find current target's position in sorted list
+    local current_sorted_index = 1
+    for i, entry in ipairs(sorted) do
+        if entry.enemy == current_target then
+            current_sorted_index = i
+            break
+        end
+    end
+
+    -- Cycle to next closest
+    current_sorted_index = current_sorted_index + 1
+    if current_sorted_index > #sorted then
+        current_sorted_index = 1
+    end
+
+    current_target = sorted[current_sorted_index].enemy
+    current_target_index = current_sorted_index
     return current_target
 end
 
@@ -740,34 +905,33 @@ function HUD.reset_targeting()
 end
 
 -- Validate current target against active enemies list
--- If target is no longer in the list, select next available or clear
-function HUD.validate_target(enemies)
+-- If target is no longer in the list, select closest enemy
+function HUD.validate_target(enemies, ship_x, ship_z)
     if not current_target then return end
 
     -- Check if current target is still in the enemies list
     local target_valid = false
-    local target_new_index = 0
 
-    for i, enemy in ipairs(enemies) do
+    for _, enemy in ipairs(enemies) do
         if enemy == current_target then
             target_valid = true
-            target_new_index = i
             break
         end
     end
 
-    if target_valid then
-        -- Update index in case list order changed
-        current_target_index = target_new_index
-    else
-        -- Target destroyed - select next available or clear
-        if #enemies > 0 then
-            -- Wrap index to valid range and select next target
-            current_target_index = math.min(current_target_index, #enemies)
-            if current_target_index < 1 then current_target_index = 1 end
-            current_target = enemies[current_target_index]
+    if not target_valid then
+        -- Target destroyed - select closest enemy
+        if #enemies > 0 and ship_x and ship_z then
+            current_target = find_closest_enemy(enemies, ship_x, ship_z)
+            -- Update index to match
+            for i, enemy in ipairs(enemies) do
+                if enemy == current_target then
+                    current_target_index = i
+                    break
+                end
+            end
         else
-            -- No enemies left
+            -- No enemies left or no ship position
             current_target_index = 0
             current_target = nil
         end
@@ -782,7 +946,7 @@ function HUD.draw_target_bracket_3d(target, cam, projMatrix, viewMatrix)
     if not target or not renderer then return end
 
     local target_x = target.x
-    local target_y = (target.y or 0) + 1  -- Slightly above target center
+    local target_y = target.y or 0  -- Center on target
     local target_z = target.z
 
     -- Transform through view matrix (world to view space)
@@ -882,31 +1046,26 @@ function HUD.draw_combat_hud(enemies, mother_ship)
 
         -- Label
         local label = "MOTHERSHIP"
-        local label_x = (screen_w - #label * 6) / 2
+        local label_x = centerTextX(label)
         renderer.drawText(label_x, bar_y + 3, label,
                           COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
     end
 
     -- Draw target hint on right side
     local hint_text = "[T] Target"
-    local hint_x = screen_w - #hint_text * 6 - 10
+    local hint_x = screen_w - getTextWidth(hint_text) - 10
     local hint_y = screen_h - 30
     renderer.drawText(hint_x, hint_y, hint_text,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
 
-    -- Show current target info
-    if current_target then
-        local target_text = "TARGET: " .. (current_target.type or "enemy")
-        local target_x = screen_w - #target_text * 6 - 10
-        renderer.drawText(target_x, hint_y - 12, target_text,
-                          COLOR_YELLOW[1], COLOR_YELLOW[2], COLOR_YELLOW[3], 1, true)
-    end
 end
 
 -- Handle keypresses
 function HUD.keypressed(key)
     if key == "c" then
         return HUD.toggle_controls()
+    elseif key == "g" then
+        return HUD.toggle_goal_box()
     elseif key == "tab" or key == "escape" then
         return HUD.toggle_pause()
     end

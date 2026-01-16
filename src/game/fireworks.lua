@@ -1,24 +1,13 @@
 -- Fireworks Module
 -- Creates celebratory firework effects for race completions
 
+local config = require("config")
+
 local Fireworks = {}
 
 -- Firework state
 local rockets = {}      -- Rockets launching upward
 local sparks = {}       -- Explosion sparks
-local max_sparks = 500  -- Maximum sparks allowed
-
--- Color palettes for fireworks
-local COLORS = {
-    {255, 100, 100},   -- Red
-    {100, 255, 100},   -- Green
-    {100, 100, 255},   -- Blue
-    {255, 255, 100},   -- Yellow
-    {255, 100, 255},   -- Magenta
-    {100, 255, 255},   -- Cyan
-    {255, 200, 100},   -- Orange
-    {255, 255, 255},   -- White
-}
 
 -- Initialize/reset fireworks
 function Fireworks.reset()
@@ -35,11 +24,11 @@ function Fireworks.launch(x, y, z, power)
         y = y,
         z = z,
         vx = (math.random() - 0.5) * 2 * power,
-        vy = 15 + math.random() * 10 * power,  -- Strong upward velocity
+        vy = config.FIREWORK_ROCKET_VELOCITY + math.random() * config.FIREWORK_ROCKET_VELOCITY_VAR * power,
         vz = (math.random() - 0.5) * 2 * power,
         life = 0,
-        max_life = 0.8 + math.random() * 0.4,  -- Time before explosion
-        color = COLORS[math.random(#COLORS)],
+        max_life = config.FIREWORK_ROCKET_LIFETIME + math.random() * config.FIREWORK_ROCKET_LIFETIME_VAR,
+        color = config.FIREWORK_COLORS[math.random(#config.FIREWORK_COLORS)],
         trail = {},  -- Trail positions
         power = power,
     }
@@ -74,15 +63,15 @@ end
 
 -- Create explosion sparks when rocket detonates
 local function explode(rocket)
-    local spark_count = math.floor(30 * rocket.power)
+    local spark_count = math.floor(config.FIREWORK_SPARK_COUNT * rocket.power)
     local color = rocket.color
 
     for i = 1, spark_count do
-        if #sparks < max_sparks then
+        if #sparks < config.FIREWORK_MAX_SPARKS then
             -- Random direction on a sphere
             local theta = math.random() * math.pi * 2
             local phi = math.acos(2 * math.random() - 1)
-            local speed = 3 + math.random() * 5
+            local speed = config.FIREWORK_SPARK_SPEED * (0.5 + math.random() * 0.5)
 
             local spark = {
                 x = rocket.x,
@@ -92,7 +81,7 @@ local function explode(rocket)
                 vy = math.sin(phi) * math.sin(theta) * speed,
                 vz = math.cos(phi) * speed,
                 life = 0,
-                max_life = 1.0 + math.random() * 0.5,
+                max_life = config.FIREWORK_SPARK_LIFETIME + math.random() * config.FIREWORK_SPARK_LIFETIME_VAR,
                 color = {color[1], color[2], color[3]},
                 prev_x = rocket.x,
                 prev_y = rocket.y,
@@ -122,7 +111,7 @@ function Fireworks.update(dt)
         rocket.z = rocket.z + rocket.vz * dt
 
         -- Apply gravity (less than normal for dramatic arc)
-        rocket.vy = rocket.vy - 15 * dt
+        rocket.vy = rocket.vy - config.FIREWORK_GRAVITY * dt
 
         -- Update life
         rocket.life = rocket.life + dt
@@ -149,7 +138,7 @@ function Fireworks.update(dt)
         spark.z = spark.z + spark.vz * dt
 
         -- Apply gravity
-        spark.vy = spark.vy - 20 * dt
+        spark.vy = spark.vy - (config.FIREWORK_GRAVITY + 5) * dt
 
         -- Apply drag
         spark.vx = spark.vx * 0.98
@@ -199,12 +188,13 @@ function Fireworks.draw(renderer)
 
     -- Draw sparks as short lines (trails)
     for _, spark in ipairs(sparks) do
-        local life_ratio = 1 - (spark.life / spark.max_life)
+        local life_ratio = 1 - (spark.life / spark.max_life)  -- 1 = fresh, 0 = dying
         local alpha = life_ratio * life_ratio  -- Fade out quadratically
 
-        local r = math.floor(spark.color[1] * alpha)
-        local g = math.floor(spark.color[2] * alpha)
-        local b = math.floor(spark.color[3] * alpha)
+        -- Lerp from white (fresh) to spark color (dying), then apply fade
+        local r = math.floor((255 * life_ratio + spark.color[1] * (1 - life_ratio)) * alpha)
+        local g = math.floor((255 * life_ratio + spark.color[2] * (1 - life_ratio)) * alpha)
+        local b = math.floor((255 * life_ratio + spark.color[3] * (1 - life_ratio)) * alpha)
 
         -- Draw spark as a short trail line
         renderer.drawLine3D(

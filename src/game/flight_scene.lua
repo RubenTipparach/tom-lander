@@ -95,6 +95,11 @@ local ship_death_explosion_count = 0
 local ship_death_pos = {x = 0, y = 0, z = 0}
 local ship_death_landed = false  -- True once ship has hit the ground
 
+-- Altitude warning state (for maps with altitude limits)
+local altitude_warning_active = false
+local altitude_warning_timer = 0
+local altitude_limit = nil  -- Set from map config
+
 -- Ship repair state
 local repair_timer = 0
 local is_repairing = false
@@ -138,62 +143,95 @@ function flight_scene.load()
     local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
     projMatrix = mat4.perspective(config.FOV, aspect, config.NEAR_PLANE, config.FAR_PLANE)
 
-    -- Initialize heightmap
-    Heightmap.init()
+    -- Get game mode and mission from menu to determine which map to load
+    local menu = require("menu")
+    local selected_map = menu.selected_map or config.CURRENT_MAP
+
+    -- Initialize heightmap with selected map
+    Heightmap.init(selected_map)
+
+    -- Reset minimap cache for new map
+    Minimap.reset_cache()
 
     -- Initialize skydome
     Skydome.init()
 
-    -- Generate trees
-    Trees.generate(Heightmap)
+    -- Generate trees (only for maps with grass/vegetation)
+    local map_config = Heightmap.get_map_config()
 
-    -- Clear and create landing pads (matching Picotron exactly)
-    -- Picotron aseprite_to_world formula: (aseprite_x - 64) * 4, (aseprite_z - 64) * 4
+    -- Set altitude limit from map config (nil = no limit)
+    altitude_limit = map_config and map_config.altitude_limit or nil
+    altitude_warning_active = false
+    altitude_warning_timer = 0
+
+    if map_config and map_config.has_grass then
+        Trees.generate(Heightmap)
+    else
+        Trees.clear()  -- No trees on desert maps
+    end
+
+    -- Clear and create landing pads from map config
     LandingPads.clear()
 
-    -- Pad 1: Main spawn pad (Landing Pad A) - direct world coords in Picotron
-    local pad1_x, pad1_z = 5, -3
-    LandingPads.create_pad({
-        id = 1,
-        name = Constants.LANDING_PAD_NAMES[1],
-        x = pad1_x,
-        z = pad1_z,
-        base_y = Heightmap.get_height(pad1_x, pad1_z),
-        scale = 0.5
-    })
+    if map_config and map_config.landing_pads then
+        -- Load landing pads from map configuration
+        for _, pad_def in ipairs(map_config.landing_pads) do
+            local pad_x, pad_z = Constants.aseprite_to_world(pad_def.x, pad_def.z)
+            LandingPads.create_pad({
+                id = pad_def.id,
+                name = Constants.LANDING_PAD_NAMES[pad_def.id] or ("Landing Pad " .. pad_def.id),
+                x = pad_x,
+                z = pad_z,
+                base_y = Heightmap.get_height(pad_x, pad_z),
+                scale = 0.5
+            })
+        end
+    else
+        -- Fallback: Create default landing pads for act1 (matching Picotron exactly)
+        -- Pad 1: Main spawn pad (Landing Pad A) - direct world coords in Picotron
+        local pad1_x, pad1_z = 5, -3
+        LandingPads.create_pad({
+            id = 1,
+            name = Constants.LANDING_PAD_NAMES[1],
+            x = pad1_x,
+            z = pad1_z,
+            base_y = Heightmap.get_height(pad1_x, pad1_z),
+            scale = 0.5
+        })
 
-    -- Pad 2: Landing Pad B - aseprite coords (25, 36)
-    local pad2_x, pad2_z = (25 - 64) * 4, (36 - 64) * 4  -- = -156, -112
-    LandingPads.create_pad({
-        id = 2,
-        name = Constants.LANDING_PAD_NAMES[2],
-        x = pad2_x,
-        z = pad2_z,
-        base_y = Heightmap.get_height(pad2_x, pad2_z),
-        scale = 0.5
-    })
+        -- Pad 2: Landing Pad B - aseprite coords (25, 36)
+        local pad2_x, pad2_z = (25 - 64) * 4, (36 - 64) * 4  -- = -156, -112
+        LandingPads.create_pad({
+            id = 2,
+            name = Constants.LANDING_PAD_NAMES[2],
+            x = pad2_x,
+            z = pad2_z,
+            base_y = Heightmap.get_height(pad2_x, pad2_z),
+            scale = 0.5
+        })
 
-    -- Pad 3: Landing Pad C - aseprite coords (115, 112)
-    local pad3_x, pad3_z = (115 - 64) * 4, (112 - 64) * 4  -- = 204, 192
-    LandingPads.create_pad({
-        id = 3,
-        name = Constants.LANDING_PAD_NAMES[3],
-        x = pad3_x,
-        z = pad3_z,
-        base_y = Heightmap.get_height(pad3_x, pad3_z),
-        scale = 0.5
-    })
+        -- Pad 3: Landing Pad C - aseprite coords (115, 112)
+        local pad3_x, pad3_z = (115 - 64) * 4, (112 - 64) * 4  -- = 204, 192
+        LandingPads.create_pad({
+            id = 3,
+            name = Constants.LANDING_PAD_NAMES[3],
+            x = pad3_x,
+            z = pad3_z,
+            base_y = Heightmap.get_height(pad3_x, pad3_z),
+            scale = 0.5
+        })
 
-    -- Pad 4: Landing Pad D - aseprite coords (44, 95)
-    local pad4_x, pad4_z = (44 - 64) * 4, (95 - 64) * 4  -- = -80, 124
-    LandingPads.create_pad({
-        id = 4,
-        name = Constants.LANDING_PAD_NAMES[4] or "Landing Pad D",
-        x = pad4_x,
-        z = pad4_z,
-        base_y = Heightmap.get_height(pad4_x, pad4_z),
-        scale = 0.5
-    })
+        -- Pad 4: Landing Pad D - aseprite coords (44, 95)
+        local pad4_x, pad4_z = (44 - 64) * 4, (95 - 64) * 4  -- = -80, 124
+        LandingPads.create_pad({
+            id = 4,
+            name = Constants.LANDING_PAD_NAMES[4] or "Landing Pad D",
+            x = pad4_x,
+            z = pad4_z,
+            base_y = Heightmap.get_height(pad4_x, pad4_z),
+            scale = 0.5
+        })
+    end
 
     -- Get spawn position from first landing pad
     local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
@@ -231,8 +269,7 @@ function flight_scene.load()
     Missions.buildings = buildings
     Missions.building_configs = building_configs
 
-    -- Get game mode and mission from menu
-    local menu = require("menu")
+    -- Get game mode and mission from menu (menu already required above)
     game_mode = menu.game_mode or "arcade"
     current_mission_num = menu.selected_mission  -- nil for free flight
     current_track_num = menu.selected_track      -- nil if not racing
@@ -253,10 +290,12 @@ function flight_scene.load()
     -- Start mission or race if selected
     if current_mission_num then
         Missions.start(current_mission_num, Mission)
+        HUD.set_mission(current_mission_num)
         -- Start mission-specific music
         AudioManager.start_level_music(current_mission_num)
     elseif current_track_num then
         Missions.start_race_track(current_track_num, Mission)
+        HUD.set_mission(8)  -- Race missions use mission 8+ settings (hide controls/goals by default)
         -- Racing mode defaults to focus camera (looks at next checkpoint)
         camera_mode = "focus"
         -- Racing mode uses mission 7 music mapping
@@ -375,13 +414,12 @@ function flight_scene.update(dt)
         ship.invulnerable = true
     end
 
-    -- Race victory mode: 3-second delay then freeze ship and orbit camera
+    -- Race victory mode: delay then freeze ship and orbit camera
     if race_victory_mode then
         race_victory_timer = race_victory_timer + dt
 
-        -- 3-second delay: gameplay continues normally, ship just invulnerable
-        local celebration_delay = 3.0
-        if race_victory_timer <= celebration_delay then
+        -- Delay: gameplay continues normally, ship just invulnerable
+        if race_victory_timer <= config.VICTORY_DELAY then
             -- During delay: update saved ship position for when we freeze it
             race_victory_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
             -- Normal update continues (no early return)
@@ -407,7 +445,7 @@ function flight_scene.update(dt)
             Fireworks.update(dt)
 
             -- Launch more fireworks periodically during victory
-            if math.random() < dt * 2 then  -- Roughly 2 per second
+            if math.random() < dt * config.VICTORY_FIREWORK_RATE then
                 local angle = math.random() * math.pi * 2
                 local dist = 8 + math.random() * 8
                 Fireworks.launch(
@@ -419,14 +457,12 @@ function flight_scene.update(dt)
             end
 
             -- Orbit camera around ship
-            race_victory_cam_angle = race_victory_cam_angle + dt * 0.3  -- Slow rotation
-            local orbit_dist = 12  -- Distance from ship
-            local orbit_height = 3  -- Height above ship
+            race_victory_cam_angle = race_victory_cam_angle + dt * config.VICTORY_ORBIT_SPEED
 
             -- Calculate camera position on orbit
-            cam.pos.x = ship.x + math.sin(race_victory_cam_angle) * orbit_dist
-            cam.pos.y = ship.y + orbit_height
-            cam.pos.z = ship.z + math.cos(race_victory_cam_angle) * orbit_dist
+            cam.pos.x = ship.x + math.sin(race_victory_cam_angle) * config.VICTORY_ORBIT_DISTANCE
+            cam.pos.y = ship.y + config.VICTORY_ORBIT_HEIGHT
+            cam.pos.z = ship.z + math.cos(race_victory_cam_angle) * config.VICTORY_ORBIT_DISTANCE
 
             -- Point camera at ship (use same formula as focus camera)
             local dx = ship.x - cam.pos.x
@@ -444,13 +480,12 @@ function flight_scene.update(dt)
         end
     end
 
-    -- Mission complete mode: 3-second delay then freeze ship and orbit camera
+    -- Mission complete mode: delay then freeze ship and orbit camera
     if mission_complete_mode then
         mission_complete_timer = mission_complete_timer + dt
 
-        -- 3-second delay: gameplay continues normally, ship just invulnerable
-        local celebration_delay = 3.0
-        if mission_complete_timer <= celebration_delay then
+        -- Delay: gameplay continues normally, ship just invulnerable
+        if mission_complete_timer <= config.VICTORY_DELAY then
             -- During delay: update saved ship position for when we freeze it
             mission_complete_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
             -- Normal update continues (no early return)
@@ -476,7 +511,7 @@ function flight_scene.update(dt)
             Fireworks.update(dt)
 
             -- Launch more fireworks periodically during victory
-            if math.random() < dt * 2 then  -- Roughly 2 per second
+            if math.random() < dt * config.VICTORY_FIREWORK_RATE then
                 local angle = math.random() * math.pi * 2
                 local dist = 8 + math.random() * 8
                 Fireworks.launch(
@@ -488,14 +523,12 @@ function flight_scene.update(dt)
             end
 
             -- Orbit camera around ship
-            mission_complete_cam_angle = mission_complete_cam_angle + dt * 0.3  -- Slow rotation
-            local orbit_dist = 12  -- Distance from ship
-            local orbit_height = 3  -- Height above ship
+            mission_complete_cam_angle = mission_complete_cam_angle + dt * config.VICTORY_ORBIT_SPEED
 
             -- Calculate camera position on orbit
-            cam.pos.x = ship.x + math.sin(mission_complete_cam_angle) * orbit_dist
-            cam.pos.y = ship.y + orbit_height
-            cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * orbit_dist
+            cam.pos.x = ship.x + math.sin(mission_complete_cam_angle) * config.VICTORY_ORBIT_DISTANCE
+            cam.pos.y = ship.y + config.VICTORY_ORBIT_HEIGHT
+            cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * config.VICTORY_ORBIT_DISTANCE
 
             -- Point camera at ship (use same formula as focus camera)
             local dx = ship.x - cam.pos.x
@@ -510,6 +543,33 @@ function flight_scene.update(dt)
             camera_module.updateVectors(cam)
             profile("update")
             return  -- Only return early AFTER the delay
+        end
+    end
+
+    -- Check altitude limit (for maps with altitude restrictions like canyon)
+    if altitude_limit and not ship_death_mode then
+        local map_config = Heightmap.get_map_config()
+        local warning_time = map_config and map_config.altitude_warning_time or 5
+
+        if ship.y > altitude_limit then
+            -- Over the limit - start or continue countdown
+            if not altitude_warning_active then
+                altitude_warning_active = true
+                altitude_warning_timer = warning_time
+            else
+                altitude_warning_timer = altitude_warning_timer - dt
+                if altitude_warning_timer <= 0 then
+                    -- Time's up - destroy the ship!
+                    ship.hull_health = 0
+                    altitude_warning_active = false
+                end
+            end
+        else
+            -- Back under limit - cancel warning
+            if altitude_warning_active then
+                altitude_warning_active = false
+                altitude_warning_timer = 0
+            end
         end
     end
 
@@ -919,9 +979,9 @@ function flight_scene.update(dt)
         }
         Aliens.update(dt, ship, player_on_pad, world_objects)
 
-        -- Validate current target (auto-select next if destroyed)
+        -- Validate current target (auto-select closest if destroyed)
         local enemies = Aliens.get_all()
-        local validated_target = HUD.validate_target(enemies)
+        local validated_target = HUD.validate_target(enemies, ship.x, ship.z)
         -- Sync turret target with HUD target
         Turret.target = validated_target
 
@@ -962,10 +1022,19 @@ function flight_scene.update(dt)
             end
         end
 
-        -- Check enemy bullet hits on player
-        local player_hits = Bullets.check_collision_sphere("player", ship.x, ship.y, ship.z, 0.5)
+        -- Check enemy bullet hits on player (using ship's collision box)
+        local ship_bounds = {
+            left = ship.x - config.VTOL_COLLISION_WIDTH,
+            right = ship.x + config.VTOL_COLLISION_WIDTH,
+            bottom = ship.y - config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y,
+            top = ship.y + config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y,
+            back = ship.z - config.VTOL_COLLISION_DEPTH,
+            front = ship.z + config.VTOL_COLLISION_DEPTH,
+        }
+        local player_hits = Bullets.check_collision("player", ship_bounds)
         for _, hit in ipairs(player_hits) do
             ship:take_damage(10)  -- Damage per enemy bullet
+            AudioManager.play_sfx(8)  -- Collision/damage sound
         end
     end
 
@@ -1435,7 +1504,10 @@ function flight_scene.draw()
         current_location = nil,  -- TODO: detect current landing pad/building
         is_repairing = is_repairing,
         race_data = Mission.get_race_data(),  -- Race HUD data (nil if not in race)
-        camera_mode = camera_mode  -- Current camera mode (follow/free/focus)
+        camera_mode = camera_mode,  -- Current camera mode (follow/free/focus)
+        victory_mode = race_victory_mode or mission_complete_mode,  -- Hide WASD during victory
+        altitude_warning = altitude_warning_active,  -- Altitude limit warning active
+        altitude_timer = altitude_warning_timer      -- Seconds remaining before explosion
     })
 
     -- Draw combat HUD (targeting, mothership health bar)
@@ -1456,15 +1528,15 @@ function flight_scene.draw()
 
         -- "SHIP DESTROYED" text
         local title = "SHIP DESTROYED"
-        local title_x = config.RENDER_WIDTH / 2 - #title * 4
+        local title_x = (config.RENDER_WIDTH - renderer.getTextWidth(title)) / 2
         local title_y = config.RENDER_HEIGHT / 2 - 30
         renderer.drawText(title_x, title_y, title, 255, 80, 80)
 
         -- Instructions
         local restart_text = "[R] Restart"
         local quit_text = "[Q] Quit to Menu"
-        renderer.drawText(config.RENDER_WIDTH / 2 - #restart_text * 4, config.RENDER_HEIGHT / 2 + 10, restart_text, 255, 255, 255)
-        renderer.drawText(config.RENDER_WIDTH / 2 - #quit_text * 4, config.RENDER_HEIGHT / 2 + 25, quit_text, 200, 200, 200)
+        renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, config.RENDER_HEIGHT / 2 + 10, restart_text, 255, 255, 255)
+        renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, config.RENDER_HEIGHT / 2 + 25, quit_text, 200, 200, 200)
     end
 
     -- Draw mission complete celebration panel (non-race missions)
@@ -1481,20 +1553,20 @@ function flight_scene.draw()
 
         -- "MISSION COMPLETE" title
         local title = "MISSION COMPLETE!"
-        local title_x = config.RENDER_WIDTH / 2 - #title * 4
+        local title_x = (config.RENDER_WIDTH - renderer.getTextWidth(title)) / 2
         local title_y = panel_y + 12
         renderer.drawText(title_x, title_y, title, 255, 215, 0)  -- Gold text
 
         -- Mission name
         local mission_name = Mission.mission_name or "Mission"
-        local name_x = config.RENDER_WIDTH / 2 - #mission_name * 4
+        local name_x = (config.RENDER_WIDTH - renderer.getTextWidth(mission_name)) / 2
         renderer.drawText(name_x, title_y + 18, mission_name, 255, 255, 255)
 
         -- Instructions
         local quit_text = "[Q] Return to Menu"
         local restart_text = "[R] Replay Mission"
-        renderer.drawText(config.RENDER_WIDTH / 2 - #quit_text * 4, panel_y + panel_height - 28, quit_text, 200, 255, 200)
-        renderer.drawText(config.RENDER_WIDTH / 2 - #restart_text * 4, panel_y + panel_height - 14, restart_text, 180, 180, 180)
+        renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, panel_y + panel_height - 28, quit_text, 200, 255, 200)
+        renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, panel_y + panel_height - 14, restart_text, 180, 180, 180)
     end
     profile(" hud")
 
@@ -1559,20 +1631,16 @@ function flight_scene.keypressed(key)
         return  -- Block other keys while paused
     end
 
-    -- Let HUD handle its keypresses (tab/escape for pause)
-    HUD.keypressed(key)
-
-    -- Handle G key to toggle weapons on/off in combat mode
-    if key == "g" and combat_active then
-        weapons_enabled = not weapons_enabled
-        print("[WEAPONS] " .. (weapons_enabled and "ENABLED" or "DISABLED"))
-        return
+    -- Let HUD handle its keypresses (C for controls, G for goals, tab/escape for pause)
+    local hud_handled = HUD.keypressed(key)
+    if hud_handled ~= nil then
+        return  -- HUD handled this key
     end
 
     -- Handle T key for target cycling in combat mode
     if key == "t" and combat_active then
         local enemies = Aliens.get_all()
-        local new_target = HUD.cycle_target(enemies)
+        local new_target = HUD.cycle_target(enemies, ship.x, ship.z)
         if new_target then
             Turret.target = new_target
         end
@@ -1618,8 +1686,8 @@ function flight_scene.keypressed(key)
         return
     end
 
-    if key == "r" then
-        -- Reset ship to first landing pad
+    if key == "r" and ship_death_mode then
+        -- Reset ship to first landing pad (only works when dead)
         local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
         ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
 
@@ -1648,6 +1716,7 @@ function flight_scene.keypressed(key)
             Mission.reset()
             if current_mission_num then
                 Missions.start(current_mission_num, Mission)
+                HUD.set_mission(current_mission_num)
                 -- Restart mission music
                 AudioManager.start_level_music(current_mission_num)
 

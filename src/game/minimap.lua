@@ -1,6 +1,6 @@
 -- Minimap Module
 -- Handles minimap rendering with terrain, buildings, and player position
--- Ported from Picotron version for Love2D
+-- Supports scrolling viewport for tall maps (like canyon)
 
 local Minimap = {}
 
@@ -29,30 +29,47 @@ local terrain_cache = nil
 local cache_width = 0
 local cache_height = 0
 
+-- Viewport state (for scrolling on tall maps)
+local viewport_center_z = 0  -- Center of viewport in tile coordinates
+local viewport_size = 128    -- Viewport size in tiles (square)
+
 -- Generate terrain cache from heightmap
 function Minimap.generate_terrain_cache(heightmap)
     if not heightmap then
         return nil
     end
 
-    -- Use heightmap MAP_SIZE
-    local map_size = heightmap.MAP_SIZE or 128
-    cache_width = map_size
-    cache_height = map_size
+    -- Use heightmap dimensions (supports non-square maps)
+    local map_width = heightmap.MAP_WIDTH or heightmap.MAP_SIZE or 128
+    local map_height = heightmap.MAP_HEIGHT or heightmap.MAP_SIZE or 128
+    cache_width = map_width
+    cache_height = map_height
+
+    -- Set viewport size to map width (square viewport)
+    viewport_size = map_width
+    -- Initialize viewport center to middle of map
+    viewport_center_z = map_height / 2
 
     -- Create cache as 2D array of colors
     terrain_cache = {}
 
-    for z = 0, map_size - 1 do
-        for x = 0, map_size - 1 do
+    -- Check if map has water
+    local map_config = heightmap.get_map_config and heightmap.get_map_config()
+    local has_water = not map_config or map_config.has_water ~= false
+
+    for z = 0, map_height - 1 do
+        for x = 0, map_width - 1 do
             -- Sample height at this tile
             local world_x, world_z = heightmap.tile_to_world(x, z)
             local height = heightmap.get_height(world_x, world_z)
 
             -- Map height to color
             local color
-            if height == 0 then
+            if height == 0 and has_water then
                 color = Minimap.WATER_COLOR
+            elseif height == 0 then
+                -- No water - use lowest terrain color (sand/ground)
+                color = Minimap.TERRAIN_COLORS[1]
             else
                 -- Heights 0-16 mapped to color indices 1-8
                 local color_idx = math.floor(height / 2) + 1
@@ -60,7 +77,7 @@ function Minimap.generate_terrain_cache(heightmap)
                 color = Minimap.TERRAIN_COLORS[color_idx]
             end
 
-            local idx = z * map_size + x + 1
+            local idx = z * map_width + x + 1
             terrain_cache[idx] = color
         end
     end
@@ -74,17 +91,53 @@ function Minimap.set_position(render_width, render_height)
     Minimap.Y = 10
 end
 
--- Convert world coordinates to minimap screen coordinates
+-- Update viewport to follow ship (for tall maps)
+local function update_viewport(ship_z, heightmap)
+    if not heightmap then return end
+
+    local map_height = heightmap.MAP_HEIGHT or heightmap.MAP_SIZE or 128
+    local tile_size = heightmap.TILE_SIZE or 4
+
+    -- Convert ship world Z to tile coordinate
+    local half_world_z = (map_height * tile_size) / 2
+    local ship_tile_z = (ship_z + half_world_z) / tile_size
+
+    -- Only scroll if map is taller than viewport
+    if map_height > viewport_size then
+        -- Clamp viewport center so it stays within map bounds
+        local half_viewport = viewport_size / 2
+        local min_center = half_viewport
+        local max_center = map_height - half_viewport
+
+        -- Smoothly follow ship
+        viewport_center_z = math.max(min_center, math.min(max_center, ship_tile_z))
+    else
+        -- Map fits in viewport, center it
+        viewport_center_z = map_height / 2
+    end
+end
+
+-- Convert world coordinates to minimap screen coordinates (with viewport)
 function Minimap.world_to_minimap(world_x, world_z, heightmap)
     local tile_size = heightmap and heightmap.TILE_SIZE or 4
-    local map_size = heightmap and heightmap.MAP_SIZE or 128
+    local map_width = heightmap and heightmap.MAP_WIDTH or heightmap and heightmap.MAP_SIZE or 128
+    local map_height = heightmap and heightmap.MAP_HEIGHT or heightmap and heightmap.MAP_SIZE or 128
 
-    -- Pixels per world unit
-    local pixels_per_world_unit = Minimap.SIZE / (map_size * tile_size)
+    -- Convert world to tile coordinates
+    local half_world_x = (map_width * tile_size) / 2
+    local half_world_z = (map_height * tile_size) / 2
+    local tile_x = (world_x + half_world_x) / tile_size
+    local tile_z = (world_z + half_world_z) / tile_size
 
-    -- Convert to minimap coordinates (centered)
-    local minimap_x = Minimap.X + Minimap.SIZE / 2 + world_x * pixels_per_world_unit
-    local minimap_y = Minimap.Y + Minimap.SIZE / 2 + world_z * pixels_per_world_unit
+    -- Calculate position relative to viewport
+    local viewport_min_z = viewport_center_z - viewport_size / 2
+    local rel_x = tile_x
+    local rel_z = tile_z - viewport_min_z
+
+    -- Scale to minimap pixels
+    local pixels_per_tile = Minimap.SIZE / viewport_size
+    local minimap_x = Minimap.X + rel_x * pixels_per_tile
+    local minimap_y = Minimap.Y + rel_z * pixels_per_tile
 
     -- Check bounds
     if minimap_x < Minimap.X or minimap_x > Minimap.X + Minimap.SIZE or
@@ -102,9 +155,21 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         Minimap.generate_terrain_cache(heightmap)
     end
 
+    -- Update viewport to follow ship
+    if ship then
+        update_viewport(ship.z, heightmap)
+    end
+
     local tile_size = heightmap and heightmap.TILE_SIZE or 4
-    local map_size = heightmap and heightmap.MAP_SIZE or 128
-    local pixels_per_world_unit = Minimap.SIZE / (map_size * tile_size)
+    local map_width = heightmap and heightmap.MAP_WIDTH or heightmap and heightmap.MAP_SIZE or 128
+    local map_height = heightmap and heightmap.MAP_HEIGHT or heightmap and heightmap.MAP_SIZE or 128
+
+    -- Calculate viewport bounds in tile coordinates
+    local viewport_min_z = viewport_center_z - viewport_size / 2
+    local viewport_max_z = viewport_center_z + viewport_size / 2
+
+    -- Pixels per tile for this viewport
+    local pixels_per_tile = Minimap.SIZE / viewport_size
 
     -- Draw border (black)
     for y = Minimap.Y - Minimap.BORDER, Minimap.Y + Minimap.SIZE + Minimap.BORDER - 1 do
@@ -116,13 +181,18 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         end
     end
 
-    -- Draw terrain from cache
+    -- Draw terrain from cache (only visible portion)
     if terrain_cache then
         for py = 0, Minimap.SIZE - 1 do
             for px = 0, Minimap.SIZE - 1 do
-                -- Sample from cache (scale minimap from cache)
-                local cache_x = math.floor(px * cache_width / Minimap.SIZE)
-                local cache_z = math.floor(py * cache_height / Minimap.SIZE)
+                -- Convert minimap pixel to tile coordinate
+                local cache_x = math.floor(px * viewport_size / Minimap.SIZE)
+                local cache_z = math.floor(py * viewport_size / Minimap.SIZE + viewport_min_z)
+
+                -- Clamp to valid cache range
+                cache_x = math.max(0, math.min(cache_width - 1, cache_x))
+                cache_z = math.max(0, math.min(cache_height - 1, cache_z))
+
                 local cache_idx = cache_z * cache_width + cache_x + 1
 
                 local color = terrain_cache[cache_idx]
@@ -140,17 +210,39 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         end
     end
 
+    -- Helper function to convert world to minimap coords (using viewport)
+    local function world_to_screen(wx, wz)
+        local half_world_x = (map_width * tile_size) / 2
+        local half_world_z = (map_height * tile_size) / 2
+        local tile_x = (wx + half_world_x) / tile_size
+        local tile_z = (wz + half_world_z) / tile_size
+
+        local rel_x = tile_x
+        local rel_z = tile_z - viewport_min_z
+
+        local sx = Minimap.X + rel_x * pixels_per_tile
+        local sy = Minimap.Y + rel_z * pixels_per_tile
+
+        -- Check bounds
+        if sx < Minimap.X or sx > Minimap.X + Minimap.SIZE or
+           sy < Minimap.Y or sy > Minimap.Y + Minimap.SIZE then
+            return nil, nil
+        end
+
+        return sx, sy
+    end
+
     -- Draw landing pads (white squares)
     if landing_pads then
         local pads = landing_pads.get_all and landing_pads.get_all() or landing_pads
         for _, pad in ipairs(pads) do
-            local px = Minimap.X + Minimap.SIZE / 2 + pad.x * pixels_per_world_unit
-            local py = Minimap.Y + Minimap.SIZE / 2 + pad.z * pixels_per_world_unit
-
-            -- 2x2 white square
-            for dy = -1, 0 do
-                for dx = -1, 0 do
-                    renderer.drawPixel(math.floor(px + dx), math.floor(py + dy), 255, 255, 255)
+            local px, py = world_to_screen(pad.x, pad.z)
+            if px then
+                -- 2x2 white square
+                for dy = -1, 0 do
+                    for dx = -1, 0 do
+                        renderer.drawPixel(math.floor(px + dx), math.floor(py + dy), 255, 255, 255)
+                    end
                 end
             end
         end
@@ -162,13 +254,13 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         if blink then
             for _, cargo in ipairs(cargo_items) do
                 if cargo.state ~= "attached" and cargo.state ~= "delivered" then
-                    local cx = Minimap.X + Minimap.SIZE / 2 + cargo.x * pixels_per_world_unit
-                    local cy = Minimap.Y + Minimap.SIZE / 2 + cargo.z * pixels_per_world_unit
-
-                    -- 2x2 orange square
-                    for dy = -1, 0 do
-                        for dx = -1, 0 do
-                            renderer.drawPixel(math.floor(cx + dx), math.floor(cy + dy), 255, 140, 0)
+                    local cx, cy = world_to_screen(cargo.x, cargo.z)
+                    if cx then
+                        -- 2x2 orange square
+                        for dy = -1, 0 do
+                            for dx = -1, 0 do
+                                renderer.drawPixel(math.floor(cx + dx), math.floor(cy + dy), 255, 140, 0)
+                            end
                         end
                     end
                 end
@@ -180,48 +272,48 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
     if mission_target and not race_checkpoints then
         local blink = (love.timer.getTime() * 3) % 1 < 0.7  -- Faster blink, mostly on
         if blink then
-            local tx = Minimap.X + Minimap.SIZE / 2 + mission_target.x * pixels_per_world_unit
-            local ty = Minimap.Y + Minimap.SIZE / 2 + mission_target.z * pixels_per_world_unit
-
-            -- Diamond shape (4 pixels in cross pattern)
-            renderer.drawPixel(math.floor(tx), math.floor(ty - 1), 0, 255, 0)  -- Top
-            renderer.drawPixel(math.floor(tx - 1), math.floor(ty), 0, 255, 0)  -- Left
-            renderer.drawPixel(math.floor(tx + 1), math.floor(ty), 0, 255, 0)  -- Right
-            renderer.drawPixel(math.floor(tx), math.floor(ty + 1), 0, 255, 0)  -- Bottom
-            renderer.drawPixel(math.floor(tx), math.floor(ty), 0, 255, 0)      -- Center
+            local tx, ty = world_to_screen(mission_target.x, mission_target.z)
+            if tx then
+                -- Diamond shape (4 pixels in cross pattern)
+                renderer.drawPixel(math.floor(tx), math.floor(ty - 1), 0, 255, 0)  -- Top
+                renderer.drawPixel(math.floor(tx - 1), math.floor(ty), 0, 255, 0)  -- Left
+                renderer.drawPixel(math.floor(tx + 1), math.floor(ty), 0, 255, 0)  -- Right
+                renderer.drawPixel(math.floor(tx), math.floor(ty + 1), 0, 255, 0)  -- Bottom
+                renderer.drawPixel(math.floor(tx), math.floor(ty), 0, 255, 0)      -- Center
+            end
         end
     end
 
-    -- Draw race checkpoints
+    -- Draw race checkpoints (only current and next to reduce clutter)
     if race_checkpoints then
         for i, cp in ipairs(race_checkpoints) do
-            local cx = Minimap.X + Minimap.SIZE / 2 + cp.x * pixels_per_world_unit
-            local cy = Minimap.Y + Minimap.SIZE / 2 + cp.z * pixels_per_world_unit
+            -- Only show current checkpoint and the next one
+            if i == current_checkpoint or i == current_checkpoint + 1 then
+                local cx, cy = world_to_screen(cp.x, cp.z)
+                if cx then
+                    -- Color based on checkpoint state
+                    local r, g, b
+                    if i == current_checkpoint then
+                        -- Current checkpoint: blinking yellow
+                        local blink = (love.timer.getTime() * 4) % 1 < 0.7
+                        if blink then
+                            r, g, b = 255, 200, 0
+                        else
+                            r, g, b = 180, 140, 0
+                        end
+                    else
+                        -- Next checkpoint: dim cyan
+                        r, g, b = 60, 100, 140
+                    end
 
-            -- Color based on checkpoint state
-            local r, g, b
-            if i == current_checkpoint then
-                -- Current checkpoint: blinking yellow
-                local blink = (love.timer.getTime() * 4) % 1 < 0.7
-                if blink then
-                    r, g, b = 255, 200, 0
-                else
-                    r, g, b = 180, 140, 0
+                    -- Draw checkpoint marker (small cross)
+                    renderer.drawPixel(math.floor(cx), math.floor(cy), r, g, b)
+                    renderer.drawPixel(math.floor(cx - 1), math.floor(cy), r, g, b)
+                    renderer.drawPixel(math.floor(cx + 1), math.floor(cy), r, g, b)
+                    renderer.drawPixel(math.floor(cx), math.floor(cy - 1), r, g, b)
+                    renderer.drawPixel(math.floor(cx), math.floor(cy + 1), r, g, b)
                 end
-            elseif i < current_checkpoint then
-                -- Passed checkpoint: dim green
-                r, g, b = 60, 120, 60
-            else
-                -- Future checkpoint: dim cyan
-                r, g, b = 60, 100, 140
             end
-
-            -- Draw checkpoint marker (small cross)
-            renderer.drawPixel(math.floor(cx), math.floor(cy), r, g, b)
-            renderer.drawPixel(math.floor(cx - 1), math.floor(cy), r, g, b)
-            renderer.drawPixel(math.floor(cx + 1), math.floor(cy), r, g, b)
-            renderer.drawPixel(math.floor(cx), math.floor(cy - 1), r, g, b)
-            renderer.drawPixel(math.floor(cx), math.floor(cy + 1), r, g, b)
         end
     end
 
@@ -230,12 +322,8 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         local blink = (love.timer.getTime() * 3) % 1 < 0.7  -- Fast blink, mostly on
         if blink then
             for _, enemy in ipairs(enemies) do
-                local ex = Minimap.X + Minimap.SIZE / 2 + enemy.x * pixels_per_world_unit
-                local ey = Minimap.Y + Minimap.SIZE / 2 + enemy.z * pixels_per_world_unit
-
-                -- Check bounds
-                if ex >= Minimap.X and ex <= Minimap.X + Minimap.SIZE and
-                   ey >= Minimap.Y and ey <= Minimap.Y + Minimap.SIZE then
+                local ex, ey = world_to_screen(enemy.x, enemy.z)
+                if ex then
                     -- 2x2 red square
                     for dy = -1, 0 do
                         for dx = -1, 0 do
@@ -247,21 +335,30 @@ function Minimap.draw(renderer, heightmap, ship, landing_pads, cargo_items, miss
         end
     end
 
-    -- Draw player position (yellow dot)
+    -- Draw player position (yellow dot) - always centered if scrolling
     if ship then
-        local player_x = Minimap.X + Minimap.SIZE / 2 + ship.x * pixels_per_world_unit
-        local player_y = Minimap.Y + Minimap.SIZE / 2 + ship.z * pixels_per_world_unit
-
-        -- 3x3 yellow dot
-        for dy = -1, 1 do
-            for dx = -1, 1 do
-                -- Skip corners for circular-ish shape
-                if not (math.abs(dx) == 1 and math.abs(dy) == 1) then
-                    renderer.drawPixel(math.floor(player_x + dx), math.floor(player_y + dy), 255, 255, 0)
+        local player_x, player_y = world_to_screen(ship.x, ship.z)
+        if player_x then
+            -- 3x3 yellow dot
+            for dy = -1, 1 do
+                for dx = -1, 1 do
+                    -- Skip corners for circular-ish shape
+                    if not (math.abs(dx) == 1 and math.abs(dy) == 1) then
+                        renderer.drawPixel(math.floor(player_x + dx), math.floor(player_y + dy), 255, 255, 0)
+                    end
                 end
             end
         end
     end
+end
+
+-- Reset terrain cache (call when switching maps)
+function Minimap.reset_cache()
+    terrain_cache = nil
+    cache_width = 0
+    cache_height = 0
+    viewport_center_z = 0
+    viewport_size = 128
 end
 
 return Minimap

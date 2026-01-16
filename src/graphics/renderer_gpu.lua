@@ -663,6 +663,13 @@ function renderer_gpu.drawText(x, y, text, r, g, b, scale, shadow)
     return font:getWidth(text)
 end
 
+-- Get text width for a given string and scale
+function renderer_gpu.getTextWidth(text, scale)
+    scale = scale or 1
+    local font = fonts.get(8 * scale)
+    return font:getWidth(text)
+end
+
 function renderer_gpu.getCanvas()
     return canvas
 end

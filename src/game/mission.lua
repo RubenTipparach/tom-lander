@@ -93,9 +93,7 @@ function Mission.start_hover_mission(hover_duration, landing_pad_x, landing_pad_
     -- Set objective text
     Mission.current_objectives = {
         "Take off and hover for " .. hover_duration .. " seconds",
-        "Then land back on the pad",
-        "",
-        "[TAB] Menu  [C] Show Controls"
+        "Then land back on the pad"
     }
 end
 
@@ -152,8 +150,7 @@ function Mission.start_cargo_mission(cargo_coords, landing_pad_x, landing_pad_z,
     Mission.current_objectives = {
         "Collect cargo and deliver to " .. pad_name,
         "Cargo: 0/" .. Mission.total_cargo,
-        "Land with engines off to deliver",
-        "[TAB] Menu  [C] Show Controls"
+        "Land with engines off to deliver"
     }
 end
 
@@ -267,13 +264,13 @@ function Mission.update_race(dt, ship_x, ship_y, ship_z)
         -- Determine what to display (each number for 1 second)
         -- 4.0-3.0: "3", 3.0-2.0: "2", 2.0-1.0: "1", 1.0-0.0: "GO!"
         if race.countdown_timer > 3.0 then
-            Mission.current_objectives = {"GET READY!", "", "3", "[TAB] Menu"}
+            Mission.current_objectives = {"GET READY!", "", "3", ""}
         elseif race.countdown_timer > 2.0 then
-            Mission.current_objectives = {"GET READY!", "", "2", "[TAB] Menu"}
+            Mission.current_objectives = {"GET READY!", "", "2", ""}
         elseif race.countdown_timer > 1.0 then
-            Mission.current_objectives = {"GET READY!", "", "1", "[TAB] Menu"}
+            Mission.current_objectives = {"GET READY!", "", "1", ""}
         elseif race.countdown_timer > 0 then
-            Mission.current_objectives = {"", "", "GO!", "[TAB] Menu"}
+            Mission.current_objectives = {"", "", "GO!", ""}
         end
 
         -- Countdown finished
@@ -371,7 +368,7 @@ function Mission.update_race(dt, ship_x, ship_y, ship_z)
             " - CP " .. race.current_checkpoint .. "/" .. #checkpoints,
         "Time: " .. string.format("%.1f", math.max(0, race.checkpoint_timer)) .. "s",
         checkpoints[race.current_checkpoint].name,
-        "[TAB] Menu"
+        ""
     }
 end
 
@@ -712,11 +709,19 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
     local time = love.timer.getTime()
 
     for i, cp in ipairs(checkpoints) do
+        -- Only draw previous, current, and next checkpoint (reduce clutter)
+        local is_visible = (i == race.current_checkpoint - 1) or
+                           (i == race.current_checkpoint) or
+                           (i == race.current_checkpoint + 1)
+        if not is_visible then
+            goto continue
+        end
+
         -- Distance culling
         local dx = cp.x - cam_x
         local dz = cp.z - cam_z
         local dist = math.sqrt(dx * dx + dz * dz)
-        if dist < 150 then  -- Only draw within 150 units
+        if dist < 300 then  -- Only draw within 300 units
 
             -- Get ground height at checkpoint (and cache it for detection)
             local ground_y = 0
@@ -829,6 +834,7 @@ function Mission.draw_checkpoints(renderer, heightmap, cam_x, cam_z)
                 end
             end
         end
+        ::continue::
     end
 end
 

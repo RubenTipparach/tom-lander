@@ -161,4 +161,9 @@ function Trees.get_count()
     return #trees
 end
 
+-- Clear all trees (for maps without vegetation)
+function Trees.clear()
+    trees = {}
+end
+
 return Trees

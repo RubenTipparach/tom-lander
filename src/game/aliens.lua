@@ -432,10 +432,7 @@ function Aliens.update_mother_ship(mother, dt, player, player_on_pad)
     -- Rotate slowly
     mother.yaw = mother.yaw + dt * 0.2
 
-    -- Update spiral angle for bullet hell pattern
-    mother.fire_angle = (mother.fire_angle or 0) + dt * 3  -- Rotate bullet spawn angle
-
-    -- Shoot at player with bullet hell pattern
+    -- Shoot streams at player
     mother.fire_timer = mother.fire_timer + dt
 
     local dx = player.x - mother.x
@@ -443,30 +440,57 @@ function Aliens.update_mother_ship(mother, dt, player, player_on_pad)
     local dz = player.z - mother.z
     local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
 
-    if not player_on_pad and dist <= Aliens.MOTHER_SHIP_FIRE_RANGE then
+    if not player_on_pad and dist <= Aliens.MOTHER_SHIP_FIRE_RANGE and dist > 0.1 then
         -- Check if player is below (dot product with down vector)
         local to_player_y = dy / dist
         local dot = to_player_y * (-1)
 
         if dot > 0 and mother.fire_timer >= (1 / Aliens.MOTHER_SHIP_FIRE_RATE) then
             if Aliens.spawn_bullet then
-                -- Bullet hell pattern: spiral of bullets
-                local num_bullets = 4  -- 4 bullets per burst in spiral pattern
-                for i = 0, num_bullets - 1 do
-                    local angle = mother.fire_angle + (i / num_bullets) * math.pi * 2
-                    local spread = 0.3  -- Spread from vertical
-                    local dir_x = math.sin(angle) * spread
-                    local dir_z = math.cos(angle) * spread
-                    local dir_y = -math.sqrt(1 - spread * spread)  -- Mostly downward
+                -- Direction to player (normalized)
+                local dir_x = dx / dist
+                local dir_y = dy / dist
+                local dir_z = dz / dist
 
-                    -- Spawn from edges of the ship
-                    local spawn_offset = 2.0  -- Offset from center
-                    local spawn_x = mother.x + math.sin(angle) * spawn_offset
-                    local spawn_z = mother.z + math.cos(angle) * spawn_offset
+                -- Fire 3 streams aimed at player with slight angular offset
+                local num_streams = 3
+                local stream_spread = 0.15  -- Angular spread between streams
+
+                for i = 0, num_streams - 1 do
+                    -- Calculate perpendicular offset for each stream
+                    -- Use cross product with up vector to get perpendicular direction
+                    local perp_x = -dir_z
+                    local perp_z = dir_x
+                    local perp_len = math.sqrt(perp_x * perp_x + perp_z * perp_z)
+                    if perp_len > 0.01 then
+                        perp_x = perp_x / perp_len
+                        perp_z = perp_z / perp_len
+                    end
+
+                    -- Offset: -1, 0, +1 for 3 streams
+                    local offset = (i - 1) * stream_spread
+
+                    -- Add perpendicular offset to direction
+                    local stream_dir_x = dir_x + perp_x * offset
+                    local stream_dir_z = dir_z + perp_z * offset
+                    local stream_dir_y = dir_y
+
+                    -- Re-normalize
+                    local stream_len = math.sqrt(stream_dir_x*stream_dir_x + stream_dir_y*stream_dir_y + stream_dir_z*stream_dir_z)
+                    if stream_len > 0.01 then
+                        stream_dir_x = stream_dir_x / stream_len
+                        stream_dir_y = stream_dir_y / stream_len
+                        stream_dir_z = stream_dir_z / stream_len
+                    end
+
+                    -- Spawn from slightly offset positions on the ship
+                    local spawn_offset = 1.5
+                    local spawn_x = mother.x + perp_x * offset * spawn_offset * 5
+                    local spawn_z = mother.z + perp_z * offset * spawn_offset * 5
 
                     Aliens.spawn_bullet(
                         spawn_x, mother.y - 1, spawn_z,
-                        dir_x, dir_y, dir_z,
+                        stream_dir_x, stream_dir_y, stream_dir_z,
                         Aliens.MOTHER_SHIP_FIRE_RANGE
                     )
                 end

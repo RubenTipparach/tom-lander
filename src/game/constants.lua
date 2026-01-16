@@ -45,15 +45,22 @@ Constants.LANDING_PAD_NAMES = {
 
 -- Coordinate conversion utilities
 -- Convert Aseprite tilemap coordinates to world coordinates
--- Aseprite: (0,0) = top-left, (128,128) = bottom-right, (64,64) = center
+-- Aseprite: (0,0) = top-left, (width-1, height-1) = bottom-right
 -- World: Center at (0,0), 1 tile = 4 world units
+-- Uses Heightmap dimensions for non-square maps
 function Constants.aseprite_to_world(aseprite_x, aseprite_z)
-    return (aseprite_x - 64) * 4, (aseprite_z - 64) * 4
+    local Heightmap = require("heightmap")
+    local center_x = Heightmap.MAP_WIDTH / 2
+    local center_z = Heightmap.MAP_HEIGHT / 2
+    return (aseprite_x - center_x) * 4, (aseprite_z - center_z) * 4
 end
 
 -- Convert world coordinates to Aseprite tilemap coordinates
 function Constants.world_to_aseprite(world_x, world_z)
-    return (world_x / 4) + 64, (world_z / 4) + 64
+    local Heightmap = require("heightmap")
+    local center_x = Heightmap.MAP_WIDTH / 2
+    local center_z = Heightmap.MAP_HEIGHT / 2
+    return (world_x / 4) + center_x, (world_z / 4) + center_z
 end
 
 -- Building names

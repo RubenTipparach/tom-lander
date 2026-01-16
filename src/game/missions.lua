@@ -178,8 +178,7 @@ function Missions.start_mission_7(Mission)
     Mission.current_objectives = {
         "Destroy all alien waves",
         "",
-        "",
-        "[TAB] Menu  [C] Show Controls"
+        ""
     }
     Mission.current_mission_num = 7
 
@@ -200,20 +199,61 @@ function Missions.start_race_track(track_num, Mission)
     Mission.type = "race"
     Mission.current_mission_num = nil  -- Racing is not a campaign mission
 
-    -- Define checkpoints (world coordinates)
-    -- Map is 128x128 tiles at 4 units per tile = 512x512 world units centered at 0,0
-    -- So valid coords are roughly -256 to +256
+    -- Define checkpoints in ASEPRITE coordinates (easier to visualize on map)
     -- y = height above ground for checkpoint ring center
-    Mission.race_checkpoints = {
-        {x = 0, z = 0, y = 6, time = 30, name = "Start/Finish"},           -- Landing Pad A (center)
-        {x = -80, z = -60, y = 10, time = 25, name = "Fuel Depot"},        -- Southwest, higher
-        {x = -120, z = 40, y = 4, time = 30, name = "Research Station"},   -- Northwest, low
-        {x = -40, z = 120, y = 14, time = 35, name = "Mining Platform"},   -- North, high
-        {x = 90, z = 100, y = 8, time = 25, name = "Relay Tower"},         -- Northeast
-        {x = 140, z = 0, y = 5, time = 30, name = "Cargo Bay"},            -- East, low
-        {x = 120, z = -100, y = 12, time = 25, name = "Power Station"},     -- Southeast, high
-        {x = 0, z = -80, y = 6, time = 30, name = "Final Stretch"},        -- South, back to start
-    }
+    -- Coordinates are converted to world coords below
+    local checkpoints_aseprite
+
+    if track_num == 2 then
+        -- Track 2: Canyon Run (act2 map - 128x256 tiles)
+        -- Aseprite origin (0,0) = top-left, map center = (64, 128)
+        -- Spawn is at aseprite (41, 264)
+        -- Note: altitude limit is 58 world units (height 29 * 2), keep checkpoints low
+        checkpoints_aseprite = {
+            
+            {x = 41, z = 243, y = 12, time = 25, name = "Canyon Entrance"},
+            {x = 67, z = 210, y = 12, time = 30, name = "East Ridge"},
+            {x = 96, z = 202, y = 13, time = 30, name = "High Pass"},
+            {x = 83, z = 173, y = 13, time = 30, name = "Summit"},
+            {x = 46, z = 176, y = 12, time = 25, name = "West Descent"},
+            {x = 77, z = 144, y = 12, time = 30, name = "Valley Floor"},
+            {x = 93, z = 123, y = 11, time = 25, name = "Back Canyon"},
+            {x = 68, z = 135, y = 12, time = 30, name = "Return 1"},
+            {x = 33, z = 161, y = 12, time = 30, name = "Return 2"},
+            {x = 72, z = 179, y = 12, time = 30, name = "Return 3"},
+            {x = 121, z = 208, y = 13, time = 30, name = "Return 4"},
+            {x = 68, z = 223, y = 12, time = 30, name = "Return 5"},
+            --{x = 38, z = 243, y = 11, time = 30, name = "Final Approach"},
+        }
+        Mission.mission_name = "Canyon Run"
+    else
+        -- Track 1: Island Circuit (act1 map - 128x128 tiles)
+        -- Aseprite origin (0,0) = top-left, map center = (64, 64)
+        checkpoints_aseprite = {
+           -- {x = 64, z = 64, y = 6, time = 30, name = "Start/Finish"},       -- Landing Pad A (center)
+            {x = 44, z = 49, y = 10, time = 25, name = "Fuel Depot"},        -- Southwest
+            {x = 34, z = 74, y = 8, time = 30, name = "Research Station"},   -- Northwest
+            {x = 54, z = 94, y = 14, time = 35, name = "Mining Platform"},   -- North
+            {x = 87, z = 89, y = 8, time = 25, name = "Relay Tower"},        -- Northeast
+            {x = 99, z = 64, y = 5, time = 30, name = "Cargo Bay"},          -- East
+            {x = 94, z = 39, y = 12, time = 25, name = "Power Station"},     -- Southeast
+            {x = 64, z = 44, y = 6, time = 30, name = "Final Stretch"},      -- South
+        }
+        Mission.mission_name = "Island Circuit"
+    end
+
+    -- Convert aseprite coordinates to world coordinates
+    Mission.race_checkpoints = {}
+    for _, cp in ipairs(checkpoints_aseprite) do
+        local world_x, world_z = Constants.aseprite_to_world(cp.x, cp.z)
+        table.insert(Mission.race_checkpoints, {
+            x = world_x,
+            z = world_z,
+            y = cp.y,
+            time = cp.time,
+            name = cp.name
+        })
+    end
 
     -- Race state
     Mission.race = {
@@ -238,8 +278,7 @@ function Missions.start_race_track(track_num, Mission)
     Mission.current_objectives = {
         "GET READY!",
         "",
-        "Race starts in 3...",
-        "[TAB] Menu"
+        "Race starts in 3..."
     }
 end
 
