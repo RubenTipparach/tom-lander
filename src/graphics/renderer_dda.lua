@@ -502,13 +502,19 @@ function renderer_dda.drawTriangle(vA, vB, vC, texture, texData, brightness, fog
                         goto continue_pixel
                     end
 
-                    -- Apply brightness modulation with dithering if provided
-                    if brightness then
-                        local bayerIdx = band(row, 3) * 4 + band(col, 3) + 1
-                        local threshold = bayerMatrix[band(row, 3) + 1][band(col, 3) + 1] * 0.0625
+                    -- Apply brightness modulation (multiply RGB by brightness)
+                    if brightness and brightness < 1.0 then
+                        r = floor(r * brightness)
+                        g = floor(g * brightness)
+                        b = floor(b * brightness)
 
-                        if brightness < threshold then
-                            goto continue_pixel
+                        -- Only use dithering for very dark values (near black threshold)
+                        -- to avoid pure black becoming transparent
+                        if brightness < 0.1 then
+                            local threshold = bayerMatrix[band(row, 3) + 1][band(col, 3) + 1] * 0.0625
+                            if brightness < threshold * 0.1 then
+                                goto continue_pixel
+                            end
                         end
                     end
 

@@ -16,6 +16,7 @@ Constants.SPRITE_SHIP_DAMAGE = 10
 Constants.SPRITE_SKYBOX = 11
 Constants.SPRITE_SKYBOX_OVERCAST = 23  -- Cloudy/overcast sky for weather
 Constants.SPRITE_SKYBOX_SUNSET = 29    -- Sunset sky for alien mission (shared with Picotron)
+Constants.SPRITE_SKYBOX_NIGHT = "night_time"  -- Night sky for night racing mode (assets/night_time.png)
 Constants.SPRITE_WATER = 12
 Constants.SPRITE_WATER2 = 13
 Constants.SPRITE_GRASS = 15  -- Grass texture for elevation 3+ (32x32)

@@ -192,6 +192,8 @@ end
 
 -- Racing: Time Trial Track
 -- Race through checkpoints around the map, 3 laps
+-- Track 1: Island Circuit (day), Track 2: Canyon Run (day)
+-- Track 3: Island Night, Track 4: Canyon Night
 function Missions.start_race_track(track_num, Mission)
     Mission.mission_name = "Time Trial"
     Mission.active = true
@@ -199,18 +201,27 @@ function Missions.start_race_track(track_num, Mission)
     Mission.type = "race"
     Mission.current_mission_num = nil  -- Racing is not a campaign mission
 
+    -- Determine if this is a night track
+    -- Tracks 3 and 4 are night versions of tracks 1 and 2
+    local is_night = (track_num == 3 or track_num == 4)
+    local base_track = track_num
+    if track_num == 3 then base_track = 1 end  -- Island Night uses Island checkpoints
+    if track_num == 4 then base_track = 2 end  -- Canyon Night uses Canyon checkpoints
+
+    -- Store night mode flag for flight_scene to use
+    Mission.night_mode = is_night
+
     -- Define checkpoints in ASEPRITE coordinates (easier to visualize on map)
     -- y = height above ground for checkpoint ring center
     -- Coordinates are converted to world coords below
     local checkpoints_aseprite
 
-    if track_num == 2 then
-        -- Track 2: Canyon Run (act2 map - 128x256 tiles)
+    if base_track == 2 then
+        -- Track 2/4: Canyon Run (act2 map - 128x256 tiles)
         -- Aseprite origin (0,0) = top-left, map center = (64, 128)
         -- Spawn is at aseprite (41, 264)
-        -- Note: altitude limit is 58 world units (height 29 * 2), keep checkpoints low
+        -- Note: altitude limit is 30 world units (300m displayed), keep checkpoints low
         checkpoints_aseprite = {
-            
             {x = 41, z = 243, y = 12, time = 25, name = "Canyon Entrance"},
             {x = 67, z = 210, y = 12, time = 30, name = "East Ridge"},
             {x = 96, z = 202, y = 13, time = 30, name = "High Pass"},
@@ -223,14 +234,12 @@ function Missions.start_race_track(track_num, Mission)
             {x = 72, z = 179, y = 12, time = 30, name = "Return 3"},
             {x = 121, z = 208, y = 13, time = 30, name = "Return 4"},
             {x = 68, z = 223, y = 12, time = 30, name = "Return 5"},
-            --{x = 38, z = 243, y = 11, time = 30, name = "Final Approach"},
         }
-        Mission.mission_name = "Canyon Run"
+        Mission.mission_name = is_night and "Canyon Night" or "Canyon Run"
     else
-        -- Track 1: Island Circuit (act1 map - 128x128 tiles)
+        -- Track 1/3: Island Circuit (act1 map - 128x128 tiles)
         -- Aseprite origin (0,0) = top-left, map center = (64, 64)
         checkpoints_aseprite = {
-           -- {x = 64, z = 64, y = 6, time = 30, name = "Start/Finish"},       -- Landing Pad A (center)
             {x = 44, z = 49, y = 10, time = 25, name = "Fuel Depot"},        -- Southwest
             {x = 34, z = 74, y = 8, time = 30, name = "Research Station"},   -- Northwest
             {x = 54, z = 94, y = 14, time = 35, name = "Mining Platform"},   -- North
@@ -239,7 +248,7 @@ function Missions.start_race_track(track_num, Mission)
             {x = 94, z = 39, y = 12, time = 25, name = "Power Station"},     -- Southeast
             {x = 64, z = 44, y = 6, time = 30, name = "Final Stretch"},      -- South
         }
-        Mission.mission_name = "Island Circuit"
+        Mission.mission_name = is_night and "Island Night" or "Island Circuit"
     end
 
     -- Convert aseprite coordinates to world coordinates

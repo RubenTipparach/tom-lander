@@ -65,12 +65,13 @@ Mission.hover_duration = 0
 Mission.mission_name = ""
 Mission.current_mission_num = nil
 
--- Race state (set by missions.lua for mission 7)
+-- Race state (set by missions.lua for racing tracks)
 Mission.race = nil
 Mission.race_checkpoints = nil
 Mission.race_complete = false  -- True when race is finished (for victory screen)
 Mission.lap_just_completed = false  -- True for one frame when a lap finishes (for fireworks)
 Mission.race_just_completed = false  -- True for one frame when race finishes (for big fireworks)
+Mission.night_mode = false  -- True for night racing tracks (tracks 3 and 4)
 
 -- Initialize a hover mission (take off, hover, land)
 function Mission.start_hover_mission(hover_duration, landing_pad_x, landing_pad_z, landing_pad_id)
@@ -450,6 +451,7 @@ function Mission.reset()
     Mission.race_complete = false
     Mission.lap_just_completed = false
     Mission.race_just_completed = false
+    Mission.night_mode = false
 end
 
 -- Get mission data for HUD

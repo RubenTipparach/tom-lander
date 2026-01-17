@@ -1273,16 +1273,43 @@ end
 function flight_scene.draw()
     profile("clear")
 
-    -- Update fog based on weather state (narrower visibility during storms)
+    -- Update fog based on weather state and night mode
     local fog_start, fog_max = Weather.get_fog_settings()
-    local fog_color = Weather.is_enabled() and config.WEATHER_FOG_COLOR or config.FOG_COLOR
+    local fog_color = config.FOG_COLOR  -- Default fog color
+
+    -- Night mode overrides (check Mission.night_mode flag set by racing tracks 3 and 4)
+    if Mission.night_mode then
+        fog_color = config.NIGHT_FOG_COLOR or {29, 43, 83}  -- Dark blue fog for night
+        fog_start = config.NIGHT_FOG_START or 25
+        fog_max = config.NIGHT_FOG_MAX or 45
+    elseif Weather.is_enabled() then
+        fog_color = config.WEATHER_FOG_COLOR
+    end
     renderer.setFog(true, fog_start, fog_max, fog_color[1], fog_color[2], fog_color[3])
 
-    -- Set clear color to match fog (darker during weather)
-    if Weather.is_enabled() then
+    -- Set clear color to match fog
+    if Mission.night_mode then
+        local night_fog = config.NIGHT_FOG_COLOR or {29, 43, 83}
+        renderer.setClearColor(night_fog[1], night_fog[2], night_fog[3])
+    elseif Weather.is_enabled() then
         renderer.setClearColor(config.WEATHER_FOG_COLOR[1], config.WEATHER_FOG_COLOR[2], config.WEATHER_FOG_COLOR[3])
     else
         renderer.setClearColor(162, 136, 121)  -- Default clear color
+    end
+
+    -- Update lighting for night mode (reduced intensity)
+    if renderer.setDirectionalLight then
+        local lightDir = config.LIGHT_DIRECTION or {0.5, -0.8, 0.3}
+        if Mission.night_mode then
+            local intensity = config.NIGHT_LIGHT_INTENSITY or 0.25
+            local ambient_ratio = config.NIGHT_AMBIENT_RATIO or 0.5
+            local ambient = intensity * ambient_ratio  -- Ambient as percentage of intensity
+            renderer.setDirectionalLight(lightDir[1], lightDir[2], lightDir[3], intensity, ambient)
+        else
+            local intensity = config.LIGHT_INTENSITY or 0.8
+            local ambient = config.AMBIENT_LIGHT or 0.3
+            renderer.setDirectionalLight(lightDir[1], lightDir[2], lightDir[3], intensity, ambient)
+        end
     end
 
     -- Set clear color and clear buffers
@@ -1349,10 +1376,12 @@ function flight_scene.draw()
     end
 
     -- Draw skydome FIRST (always behind everything, follows camera)
-    -- Select sky type based on mission: sunset for Mission 7, overcast for weather, normal otherwise
+    -- Select sky type based on mission: night for night racing, sunset for Mission 7, overcast for weather, normal otherwise
     profile(" skydome")
     local sky_type = "normal"
-    if Mission.current_mission_num == 7 then
+    if Mission.night_mode then
+        sky_type = "night"
+    elseif Mission.current_mission_num == 7 then
         sky_type = "sunset"
     elseif Weather.is_enabled() then
         sky_type = "overcast"

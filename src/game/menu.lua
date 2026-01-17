@@ -316,9 +316,12 @@ end
 function menu.update_racing_options()
     menu.racing_options = {}
 
-    -- Track list
+    -- Track list (day tracks)
     table.insert(menu.racing_options, {text = "TRACK 1: ISLAND CIRCUIT", track = 1, locked = false})
     table.insert(menu.racing_options, {text = "TRACK 2: CANYON RUN", track = 2, locked = false})
+    -- Night tracks
+    table.insert(menu.racing_options, {text = "TRACK 3: ISLAND NIGHT", track = 3, locked = false})
+    table.insert(menu.racing_options, {text = "TRACK 4: CANYON NIGHT", track = 4, locked = false})
 
     table.insert(menu.racing_options, {text = "BACK", action = "back", locked = false})
 
@@ -660,11 +663,11 @@ function menu.select_mode()
     -- Store selected mission/track and mode for the flight scene
     menu.selected_mission = menu.pending_mission
     menu.selected_track = menu.pending_track
-    -- Set map based on track (track 2 uses canyon/act2 map)
-    if menu.pending_track == 2 then
-        menu.selected_map = "act2"  -- Canyon track uses act2 map
+    -- Set map based on track (tracks 2 and 4 use canyon/act2 map)
+    if menu.pending_track == 2 or menu.pending_track == 4 then
+        menu.selected_map = "act2"  -- Canyon tracks use act2 map
     else
-        menu.selected_map = "act1"  -- Campaign, island track use act1 map
+        menu.selected_map = "act1"  -- Campaign, island tracks use act1 map
     end
     menu.game_mode = mode
     scene_manager.switch("flight")

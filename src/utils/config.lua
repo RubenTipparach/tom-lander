@@ -77,6 +77,15 @@ config.SKYBOX_HEIGHT = 60            -- Height of dome apex
 config.SKYBOX_SIDES = 16             -- Number of polygon sides (more = smoother)
 
 -- ===========================================
+-- NIGHT MODE SETTINGS (Racing)
+-- ===========================================
+config.NIGHT_FOG_COLOR = {29, 43, 83}     -- #1d2b53 - Dark blue fog for night
+config.NIGHT_LIGHT_INTENSITY = 0.4        -- Overall brightness for night mode (0-1)
+config.NIGHT_AMBIENT_RATIO = 0.9          -- Ambient as percentage of intensity (0-1)
+config.NIGHT_FOG_START = 25               -- Fog starts closer at night
+config.NIGHT_FOG_MAX = 45                 -- Max fog distance at night
+
+-- ===========================================
 -- TERRAIN TEXTURE SETTINGS
 -- ===========================================
 -- Height thresholds (palette index 0-31)

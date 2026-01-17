@@ -62,7 +62,7 @@ end
 -- Draw skydome centered at camera position
 -- IMPORTANT: This should be called FIRST before other geometry
 -- Uses dedicated sky shader (no fog) and no depth test
--- sky_type: "normal" (default), "overcast" (weather), or "sunset" (mission 7)
+-- sky_type: "normal" (default), "overcast" (weather), "sunset" (mission 7), or "night" (night racing)
 function Skydome.draw(renderer, cam_x, cam_y, cam_z, sky_type)
     -- Select sprite based on sky type
     local sprite_id = Constants.SPRITE_SKYBOX  -- default: normal sky
@@ -70,6 +70,8 @@ function Skydome.draw(renderer, cam_x, cam_y, cam_z, sky_type)
         sprite_id = Constants.SPRITE_SKYBOX_OVERCAST
     elseif sky_type == "sunset" then
         sprite_id = Constants.SPRITE_SKYBOX_SUNSET
+    elseif sky_type == "night" then
+        sprite_id = Constants.SPRITE_SKYBOX_NIGHT
     elseif sky_type == true then
         -- Backwards compatibility: true = overcast
         sprite_id = Constants.SPRITE_SKYBOX_OVERCAST
