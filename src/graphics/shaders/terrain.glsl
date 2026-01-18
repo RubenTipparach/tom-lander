@@ -52,12 +52,32 @@ uniform float u_shadowBrightnessMax;   // Brightness for original color
 uniform float u_shadowDitherRange;     // Range of blend where dithering occurs (0-1)
 uniform Image u_paletteShadowLookup;   // 32x8 texture: palette shadows lookup (x=color, y=level)
 
+// Point lights (max 4)
+uniform int u_pointLightCount;
+uniform vec3 u_pointLightPos[4];
+uniform float u_pointLightRadius[4];
+uniform float u_pointLightIntensity[4];
+uniform float u_pointLightUseNormals;  // 1.0 = use N·L calculation, 0.0 = omnidirectional
+
 #ifdef VERTEX
 varying vec2 v_texCoord;
 varying vec4 v_color;
 varying float v_height;      // Raw height value for texture blending
 varying float v_viewDist;
 varying vec4 v_worldPos;     // World position for shadow map lookup
+varying vec3 v_worldNormal;  // World-space normal for point light calculations
+
+// Estimate world normal from neighboring height samples
+// For terrain, we approximate using the position gradient
+vec3 estimateTerrainNormal(vec4 worldPos) {
+    // For terrain, assume upward-facing with some tilt based on position
+    // This is approximate - actual normal would come from heightmap gradient
+    // We use the model matrix to transform a base up vector
+    vec3 baseNormal = vec3(0.0, 1.0, 0.0);
+    // Transform normal by model matrix (ignoring translation)
+    mat3 normalMatrix = mat3(modelMatrix);
+    return normalize(normalMatrix * baseNormal);
+}
 
 vec4 position(mat4 transformProjection, vec4 vertexPosition) {
     vec4 worldPosition = modelMatrix * vertexPosition;
@@ -68,6 +88,9 @@ vec4 position(mat4 transformProjection, vec4 vertexPosition) {
     v_viewDist = length(viewPosition.xyz);
     v_texCoord = VaryingTexCoord.xy;
     v_color = VaryingColor;
+
+    // Estimate world normal for point light calculations
+    v_worldNormal = estimateTerrainNormal(worldPosition);
 
     // Height is passed via vertex color alpha channel (scaled 0-1 for 0-32 range)
     v_height = VaryingColor.a * 32.0;
@@ -85,6 +108,7 @@ varying vec4 v_color;
 varying float v_height;
 varying float v_viewDist;
 varying vec4 v_worldPos;
+varying vec3 v_worldNormal;
 
 // Bayer 4x4 dithering matrix
 float getBayerValue(vec2 screenPos) {
@@ -108,6 +132,48 @@ float getBayerValue(vec2 screenPos) {
     if (idx == 13) return 7.0/16.0;
     if (idx == 14) return 13.0/16.0;
     return 5.0/16.0;
+}
+
+// Calculate point light contribution at a world position with dithered falloff
+// Uses N·L dot product for angle-based lighting when enabled
+// Returns additive brightness (0 = no light, 1+ = bright)
+float calculatePointLights(vec3 worldPos, vec3 worldNormal, vec2 screenCoords) {
+    float totalLight = 0.0;
+    float ditherThreshold = getBayerValue(screenCoords);
+
+    for (int i = 0; i < 4; i++) {
+        if (i >= u_pointLightCount) break;
+
+        vec3 lightPos = u_pointLightPos[i];
+        float radius = u_pointLightRadius[i];
+        float intensity = u_pointLightIntensity[i];
+
+        // Distance from point to light
+        vec3 toLight = lightPos - worldPos;
+        float dist = length(toLight);
+
+        // Dithered falloff within radius
+        if (dist < radius) {
+            float attenuation = 1.0 - (dist / radius);
+
+            // Apply N·L angle factor if normals are enabled
+            float angleFactor = 1.0;
+            if (u_pointLightUseNormals > 0.5 && dist > 0.01) {
+                vec3 lightDir = toLight / dist;  // Normalized direction to light
+                float NdotL = dot(worldNormal, lightDir);
+                // Clamp to 0-1 range (surfaces facing away get no light)
+                angleFactor = max(0.0, NdotL);
+            }
+
+            // Use dithering for smooth falloff at edges
+            float finalAttenuation = attenuation * angleFactor;
+            if (finalAttenuation > ditherThreshold * 0.3) {
+                totalLight += intensity * finalAttenuation;
+            }
+        }
+    }
+
+    return totalLight;
 }
 
 // Find closest palette index for a given RGB color by searching the lookup texture
@@ -356,6 +422,10 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
         if (shadowFactor > 0.5) {
             combinedBrightness *= u_shadowDarkness;  // Darken in shadow
         }
+
+        // Add point light contribution (additive, affects even shadowed areas)
+        float pointLightContrib = calculatePointLights(v_worldPos.xyz, normalize(v_worldNormal), screen_coords);
+        combinedBrightness = clamp(combinedBrightness + pointLightContrib, 0.0, 1.0);
 
         // Apply lighting using palette shadows or RGB darkening
         if (u_usePaletteShadows > 0.5 && isPaletteTextureValid()) {

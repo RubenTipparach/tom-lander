@@ -75,6 +75,11 @@ local ditherEnabled = true
 -- Palette shadow lookup texture (32x8: 32 colors × 8 shadow levels)
 local paletteShadowTexture = nil
 
+-- Point lights (max 4 for performance)
+local MAX_POINT_LIGHTS = 4
+local pointLights = {}  -- {id = {x, y, z, radius, intensity, r, g, b}}
+local pointLightCount = 0
+
 -- Stats for profiler
 local stats = {
     trianglesDrawn = 0,
@@ -751,6 +756,16 @@ function renderer_gpu.flush3D()
     end
     pcall(function() shader3D:send("u_usePaletteShadows", config.USE_PALETTE_SHADOWS and 1.0 or 0.0) end)
 
+    -- Point light uniforms
+    local positions, radii, intensities, count = renderer_gpu.getPointLightUniforms()
+    pcall(function() shader3D:send("u_pointLightCount", count) end)
+    pcall(function() shader3D:send("u_pointLightPos", unpack(positions)) end)
+    pcall(function() shader3D:send("u_pointLightRadius", unpack(radii)) end)
+    pcall(function() shader3D:send("u_pointLightIntensity", unpack(intensities)) end)
+    -- Use normals for point lights (configurable per light type, but apply globally here)
+    local useNormals = (config.CHECKPOINT_LIGHT_USE_NORMALS or config.THRUSTER_LIGHT_USE_NORMALS) and 1.0 or 0.0
+    pcall(function() shader3D:send("u_pointLightUseNormals", useNormals) end)
+
     -- Enable backface culling (use "front" because shader Y-flip reverses winding order)
     love.graphics.setMeshCullMode("front")
 
@@ -925,6 +940,16 @@ function renderer_gpu.flushTerrain()
     if paletteShadowTexture then
         shaderTerrain:send("u_paletteShadowLookup", paletteShadowTexture)
     end
+
+    -- Point light uniforms
+    local positions, radii, intensities, count = renderer_gpu.getPointLightUniforms()
+    shaderTerrain:send("u_pointLightCount", count)
+    shaderTerrain:send("u_pointLightPos", unpack(positions))
+    shaderTerrain:send("u_pointLightRadius", unpack(radii))
+    shaderTerrain:send("u_pointLightIntensity", unpack(intensities))
+    -- Use normals for point lights (configurable per light type, but apply globally here)
+    local useNormals = (config.CHECKPOINT_LIGHT_USE_NORMALS or config.THRUSTER_LIGHT_USE_NORMALS) and 1.0 or 0.0
+    shaderTerrain:send("u_pointLightUseNormals", useNormals)
 
     -- Send shadow map uniforms
     renderer_gpu.sendShadowMapUniforms(shaderTerrain)
@@ -1274,6 +1299,73 @@ end
 -- Get current light settings
 function renderer_gpu.getLightSettings()
     return lightDir, lightIntensity, ambientLight
+end
+
+-- ===========================================
+-- POINT LIGHTS
+-- ===========================================
+
+-- Add or update a point light
+-- id: unique identifier for the light
+-- x, y, z: world position
+-- radius: light falloff distance
+-- intensity: brightness (0-1)
+-- r, g, b: optional color (0-1), defaults to white
+function renderer_gpu.addPointLight(id, x, y, z, radius, intensity, r, g, b)
+    if not pointLights[id] then
+        pointLightCount = pointLightCount + 1
+    end
+    pointLights[id] = {
+        x = x or 0,
+        y = y or 0,
+        z = z or 0,
+        radius = radius or 10,
+        intensity = intensity or 1.0,
+        r = r or 1.0,
+        g = g or 1.0,
+        b = b or 1.0
+    }
+end
+
+-- Remove a point light
+function renderer_gpu.removePointLight(id)
+    if pointLights[id] then
+        pointLights[id] = nil
+        pointLightCount = pointLightCount - 1
+    end
+end
+
+-- Clear all point lights
+function renderer_gpu.clearPointLights()
+    pointLights = {}
+    pointLightCount = 0
+end
+
+-- Get point lights as arrays for shader uniforms (max 4)
+function renderer_gpu.getPointLightUniforms()
+    local positions = {}
+    local radii = {}
+    local intensities = {}
+    local count = 0
+
+    for _, light in pairs(pointLights) do
+        if count < MAX_POINT_LIGHTS then
+            count = count + 1
+            positions[count] = {light.x, light.y, light.z}
+            radii[count] = light.radius
+            intensities[count] = light.intensity
+        end
+    end
+
+    -- Pad arrays to MAX_POINT_LIGHTS with zeros
+    while count < MAX_POINT_LIGHTS do
+        count = count + 1
+        positions[count] = {0, 0, 0}
+        radii[count] = 0
+        intensities[count] = 0
+    end
+
+    return positions, radii, intensities, math.min(pointLightCount, MAX_POINT_LIGHTS)
 end
 
 -- Calculate vertex brightness from normal using directional light (Gouraud shading)

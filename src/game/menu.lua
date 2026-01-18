@@ -12,6 +12,7 @@ local Constants = require("constants")
 local Palette = require("palette")
 local SaveData = require("save_data")
 local AudioManager = require("audio_manager")
+local controls = require("input.controls")
 
 -- Ship display settings (matching Picotron, Z inverted for Love2D)
 local SHIP_X = 0
@@ -398,6 +399,10 @@ function menu.load()
     love.window.setTitle("Tom Lander")
     windowWidth, windowHeight = love.graphics.getDimensions()
 
+    -- Initialize controls for gamepad support
+    controls.init()
+    controls.reset_cooldowns()
+
     menu.active = true
     menu.show_options = false
     menu.show_mode_select = false
@@ -673,9 +678,165 @@ function menu.select_mode()
     scene_manager.switch("flight")
 end
 
+-- Handle menu input (called from update for gamepad support)
+function menu.handle_input()
+    -- Title screen - press to continue
+    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign and not menu.show_racing and not menu.show_free_flight then
+        if controls.just_pressed("confirm") then
+            menu.show_options = true
+        end
+        return
+    end
+
+    -- Mode selection screen
+    if menu.show_mode_select then
+        if controls.just_pressed("menu_up") or controls.just_pressed("menu_down") then
+            menu.selected_mode = (menu.selected_mode == 1) and 2 or 1
+        elseif controls.just_pressed("confirm") then
+            menu.select_mode()
+        elseif controls.just_pressed("back") or controls.just_pressed("pause") then
+            menu.show_mode_select = false
+            -- Go back to the appropriate submenu
+            if menu.pending_track then
+                menu.show_racing = true
+                menu.pending_track = nil
+            else
+                menu.show_campaign = true
+                menu.pending_mission = nil
+            end
+        end
+        return
+    end
+
+    -- Racing track selection screen
+    if menu.show_racing then
+        if controls.just_pressed("menu_up") then
+            menu.selected_racing = menu.selected_racing - 1
+            if menu.selected_racing < 1 then
+                menu.selected_racing = #menu.racing_options
+            end
+            -- Skip locked options
+            while menu.racing_options[menu.selected_racing].locked do
+                menu.selected_racing = menu.selected_racing - 1
+                if menu.selected_racing < 1 then
+                    menu.selected_racing = #menu.racing_options
+                end
+            end
+        elseif controls.just_pressed("menu_down") then
+            menu.selected_racing = menu.selected_racing + 1
+            if menu.selected_racing > #menu.racing_options then
+                menu.selected_racing = 1
+            end
+            -- Skip locked options
+            while menu.racing_options[menu.selected_racing].locked do
+                menu.selected_racing = menu.selected_racing + 1
+                if menu.selected_racing > #menu.racing_options then
+                    menu.selected_racing = 1
+                end
+            end
+        elseif controls.just_pressed("confirm") then
+            menu.select_racing_option()
+        elseif controls.just_pressed("back") or controls.just_pressed("pause") then
+            menu.show_racing = false
+            menu.show_options = true
+        end
+        return
+    end
+
+    -- Free flight map selection screen
+    if menu.show_free_flight then
+        if controls.just_pressed("menu_up") then
+            menu.selected_free_flight = menu.selected_free_flight - 1
+            if menu.selected_free_flight < 1 then
+                menu.selected_free_flight = #menu.free_flight_options
+            end
+            -- Skip locked options
+            while menu.free_flight_options[menu.selected_free_flight].locked do
+                menu.selected_free_flight = menu.selected_free_flight - 1
+                if menu.selected_free_flight < 1 then
+                    menu.selected_free_flight = #menu.free_flight_options
+                end
+            end
+        elseif controls.just_pressed("menu_down") then
+            menu.selected_free_flight = menu.selected_free_flight + 1
+            if menu.selected_free_flight > #menu.free_flight_options then
+                menu.selected_free_flight = 1
+            end
+            -- Skip locked options
+            while menu.free_flight_options[menu.selected_free_flight].locked do
+                menu.selected_free_flight = menu.selected_free_flight + 1
+                if menu.selected_free_flight > #menu.free_flight_options then
+                    menu.selected_free_flight = 1
+                end
+            end
+        elseif controls.just_pressed("confirm") then
+            menu.select_free_flight_option()
+        elseif controls.just_pressed("back") or controls.just_pressed("pause") then
+            menu.show_free_flight = false
+            menu.show_options = true
+        end
+        return
+    end
+
+    -- Campaign mission selection screen
+    if menu.show_campaign then
+        if controls.just_pressed("menu_up") then
+            menu.selected_campaign = menu.selected_campaign - 1
+            if menu.selected_campaign < 1 then
+                menu.selected_campaign = #menu.campaign_options
+            end
+            -- Skip locked options
+            while menu.campaign_options[menu.selected_campaign].locked do
+                menu.selected_campaign = menu.selected_campaign - 1
+                if menu.selected_campaign < 1 then
+                    menu.selected_campaign = #menu.campaign_options
+                end
+            end
+        elseif controls.just_pressed("menu_down") then
+            menu.selected_campaign = menu.selected_campaign + 1
+            if menu.selected_campaign > #menu.campaign_options then
+                menu.selected_campaign = 1
+            end
+            -- Skip locked options
+            while menu.campaign_options[menu.selected_campaign].locked do
+                menu.selected_campaign = menu.selected_campaign + 1
+                if menu.selected_campaign > #menu.campaign_options then
+                    menu.selected_campaign = 1
+                end
+            end
+        elseif controls.just_pressed("confirm") then
+            menu.select_campaign_option()
+        elseif controls.just_pressed("back") or controls.just_pressed("pause") then
+            menu.show_campaign = false
+            menu.show_options = true
+        end
+        return
+    end
+
+    -- Main menu screen
+    if controls.just_pressed("menu_up") then
+        menu.selected_option = menu.selected_option - 1
+        if menu.selected_option < 1 then
+            menu.selected_option = #menu.options
+        end
+    elseif controls.just_pressed("menu_down") then
+        menu.selected_option = menu.selected_option + 1
+        if menu.selected_option > #menu.options then
+            menu.selected_option = 1
+        end
+    elseif controls.just_pressed("confirm") then
+        menu.select_option()
+    elseif controls.just_pressed("back") then
+        love.event.quit()
+    end
+end
+
 -- Update menu
 function menu.update(dt)
     if not menu.active then return end
+
+    -- Handle gamepad/keyboard input through controls module
+    menu.handle_input()
 
     -- Only update 3D elements if enabled
     if not config.MENU_3D_ENABLED then return end
@@ -695,9 +856,13 @@ function menu.update(dt)
     --     debug_cam_pitch = debug_cam_pitch + cam_speed
     -- end
 
-    -- Rotate planet and clouds
-    menu.planet.rotation = menu.planet.rotation + dt * PLANET_ROTATION_SPEED
-    menu.clouds.rotation = menu.clouds.rotation + dt * CLOUD_ROTATION_SPEED
+    -- Rotate planet and clouds (if initialized)
+    if menu.planet.rotation then
+        menu.planet.rotation = menu.planet.rotation + dt * PLANET_ROTATION_SPEED
+    end
+    if menu.clouds.rotation then
+        menu.clouds.rotation = menu.clouds.rotation + dt * CLOUD_ROTATION_SPEED
+    end
 
     -- Update space lines
     local dir_x, dir_y, dir_z = get_starfield_direction()
@@ -721,159 +886,12 @@ function menu.update(dt)
     end
 end
 
--- Handle key press
+-- Handle key press (notify controls module for input mode switching)
 function menu.keypressed(key)
     if not menu.active then return end
 
-    -- Title screen - press to continue
-    if not menu.show_options and not menu.show_mode_select and not menu.show_campaign and not menu.show_racing and not menu.show_free_flight then
-        if key == "z" or key == "x" or key == "return" then
-            menu.show_options = true
-        end
-        return
-    end
-
-    -- Mode selection screen
-    if menu.show_mode_select then
-        if key == "up" or key == "down" then
-            menu.selected_mode = (menu.selected_mode == 1) and 2 or 1
-        elseif key == "z" or key == "x" or key == "return" or key == "space" then
-            menu.select_mode()
-        elseif key == "tab" or key == "escape" then
-            menu.show_mode_select = false
-            -- Go back to the appropriate submenu
-            if menu.pending_track then
-                menu.show_racing = true
-                menu.pending_track = nil
-            else
-                menu.show_campaign = true
-                menu.pending_mission = nil
-            end
-        end
-        return
-    end
-
-    -- Racing track selection screen
-    if menu.show_racing then
-        if key == "up" then
-            menu.selected_racing = menu.selected_racing - 1
-            if menu.selected_racing < 1 then
-                menu.selected_racing = #menu.racing_options
-            end
-            -- Skip locked options
-            while menu.racing_options[menu.selected_racing].locked do
-                menu.selected_racing = menu.selected_racing - 1
-                if menu.selected_racing < 1 then
-                    menu.selected_racing = #menu.racing_options
-                end
-            end
-        elseif key == "down" then
-            menu.selected_racing = menu.selected_racing + 1
-            if menu.selected_racing > #menu.racing_options then
-                menu.selected_racing = 1
-            end
-            -- Skip locked options
-            while menu.racing_options[menu.selected_racing].locked do
-                menu.selected_racing = menu.selected_racing + 1
-                if menu.selected_racing > #menu.racing_options then
-                    menu.selected_racing = 1
-                end
-            end
-        elseif key == "z" or key == "x" or key == "return" or key == "space" then
-            menu.select_racing_option()
-        elseif key == "tab" or key == "escape" then
-            menu.show_racing = false
-            menu.show_options = true
-        end
-        return
-    end
-
-    -- Free flight map selection screen
-    if menu.show_free_flight then
-        if key == "up" then
-            menu.selected_free_flight = menu.selected_free_flight - 1
-            if menu.selected_free_flight < 1 then
-                menu.selected_free_flight = #menu.free_flight_options
-            end
-            -- Skip locked options
-            while menu.free_flight_options[menu.selected_free_flight].locked do
-                menu.selected_free_flight = menu.selected_free_flight - 1
-                if menu.selected_free_flight < 1 then
-                    menu.selected_free_flight = #menu.free_flight_options
-                end
-            end
-        elseif key == "down" then
-            menu.selected_free_flight = menu.selected_free_flight + 1
-            if menu.selected_free_flight > #menu.free_flight_options then
-                menu.selected_free_flight = 1
-            end
-            -- Skip locked options
-            while menu.free_flight_options[menu.selected_free_flight].locked do
-                menu.selected_free_flight = menu.selected_free_flight + 1
-                if menu.selected_free_flight > #menu.free_flight_options then
-                    menu.selected_free_flight = 1
-                end
-            end
-        elseif key == "z" or key == "x" or key == "return" or key == "space" then
-            menu.select_free_flight_option()
-        elseif key == "tab" or key == "escape" then
-            menu.show_free_flight = false
-            menu.show_options = true
-        end
-        return
-    end
-
-    -- Campaign mission selection screen
-    if menu.show_campaign then
-        if key == "up" then
-            menu.selected_campaign = menu.selected_campaign - 1
-            if menu.selected_campaign < 1 then
-                menu.selected_campaign = #menu.campaign_options
-            end
-            -- Skip locked options
-            while menu.campaign_options[menu.selected_campaign].locked do
-                menu.selected_campaign = menu.selected_campaign - 1
-                if menu.selected_campaign < 1 then
-                    menu.selected_campaign = #menu.campaign_options
-                end
-            end
-        elseif key == "down" then
-            menu.selected_campaign = menu.selected_campaign + 1
-            if menu.selected_campaign > #menu.campaign_options then
-                menu.selected_campaign = 1
-            end
-            -- Skip locked options
-            while menu.campaign_options[menu.selected_campaign].locked do
-                menu.selected_campaign = menu.selected_campaign + 1
-                if menu.selected_campaign > #menu.campaign_options then
-                    menu.selected_campaign = 1
-                end
-            end
-        elseif key == "z" or key == "x" or key == "return" or key == "space" then
-            menu.select_campaign_option()
-        elseif key == "tab" or key == "escape" then
-            menu.show_campaign = false
-            menu.show_options = true
-        end
-        return
-    end
-
-    -- Main menu screen
-    if key == "up" then
-        menu.selected_option = menu.selected_option - 1
-        if menu.selected_option < 1 then
-            menu.selected_option = #menu.options
-        end
-    elseif key == "down" then
-        menu.selected_option = menu.selected_option + 1
-        if menu.selected_option > #menu.options then
-            menu.selected_option = 1
-        end
-    elseif key == "z" or key == "x" or key == "return" or key == "space" then
-        menu.select_option()
-    elseif key == "escape" then
-        love.event.quit()
-    end
+    -- Notify controls module for input mode tracking
+    controls.keypressed(key)
 end
 
 -- Draw menu
@@ -1129,8 +1147,9 @@ function menu.draw_title()
     -- Draw logo if available (texture 65) - this is drawn to Love2D canvas after replacePixels
     -- We'll handle this separately in draw()
 
-    -- Draw "press Z to start" hint using pixel font
-    local hint = "[Z] to start"
+    -- Draw "press to start" hint using pixel font (input-aware)
+    local prompt = controls.get_prompt("confirm")
+    local hint = "[" .. prompt .. "] to start"
     local hint_y = math.floor(h * 0.75)
     local hint_x = math.floor((w - #hint * 5) / 2)  -- Center based on 5px char width
 
@@ -1238,8 +1257,9 @@ function menu.draw_campaign()
         renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
     end
 
-    -- Draw hint at bottom
-    local hint = "[TAB] Back"
+    -- Draw hint at bottom (input-aware)
+    local back_prompt = controls.get_prompt("back")
+    local hint = "[" .. back_prompt .. "] Back"
     local hint_c = Palette.colors[6] or {200, 200, 200}
     renderer.drawText(box_x + 10, box_y + box_height - 15, hint, hint_c[1], hint_c[2], hint_c[3], 1, true)
 end
@@ -1294,8 +1314,9 @@ function menu.draw_racing()
         renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
     end
 
-    -- Draw hint at bottom
-    local hint = "[TAB] Back"
+    -- Draw hint at bottom (input-aware)
+    local back_prompt = controls.get_prompt("back")
+    local hint = "[" .. back_prompt .. "] Back"
     local hint_c = Palette.colors[6] or {200, 200, 200}
     renderer.drawText(box_x + 10, box_y + box_height - 15, hint, hint_c[1], hint_c[2], hint_c[3], 1, true)
 end
@@ -1350,8 +1371,9 @@ function menu.draw_free_flight()
         renderer.drawText(box_x + 10, menu_y + (i - 1) * 12, prefix .. option.text, c[1], c[2], c[3], 1, true)
     end
 
-    -- Draw hint at bottom
-    local hint = "[TAB] Back"
+    -- Draw hint at bottom (input-aware)
+    local back_prompt = controls.get_prompt("back")
+    local hint = "[" .. back_prompt .. "] Back"
     local hint_c = Palette.colors[6] or {200, 200, 200}
     renderer.drawText(box_x + 10, box_y + box_height - 15, hint, hint_c[1], hint_c[2], hint_c[3], 1, true)
 end
@@ -1398,10 +1420,11 @@ function menu.draw_mode_select()
         end
     end
 
-    -- Controls hint
+    -- Controls hint (input-aware)
     menu_y = h - 40
+    local back_prompt = controls.get_prompt("back")
     local c = Palette.colors[6] or {200, 200, 200}
-    renderer.drawText(w / 2 - 60, menu_y, "[TAB] Back", c[1], c[2], c[3], 1, true)
+    renderer.drawText(w / 2 - 60, menu_y, "[" .. back_prompt .. "] Back", c[1], c[2], c[3], 1, true)
 end
 
 -- Unload menu resources

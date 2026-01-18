@@ -4,6 +4,7 @@ local config = require("config")
 local renderer = require("renderer")
 local profile = require("profiler")
 local AudioManager = require("audio_manager")
+local controls = require("input.controls")
 
 -- Frame rate tracking
 local frameCount = 0
@@ -79,4 +80,25 @@ function love.keypressed(key)
     end
 
     scene_manager.keypressed(key)
+end
+
+-- Gamepad callbacks for controls module
+function love.gamepadpressed(joystick, button)
+    controls.gamepadpressed(joystick, button)
+end
+
+function love.gamepadreleased(joystick, button)
+    controls.gamepadreleased(joystick, button)
+end
+
+function love.gamepadaxis(joystick, axis, value)
+    controls.gamepadaxis(joystick, axis, value)
+end
+
+function love.joystickadded(joystick)
+    controls.joystickadded(joystick)
+end
+
+function love.joystickremoved(joystick)
+    controls.joystickremoved(joystick)
 end

@@ -33,6 +33,7 @@ local Fireworks = require("fireworks")
 local Billboard = require("billboard")
 local Explosion = require("explosion")
 local AudioManager = require("audio_manager")
+local controls = require("input.controls")
 
 local flight_scene = {}
 
@@ -363,12 +364,11 @@ function flight_scene.load()
     -- Reset renderer state (menu may have changed these)
     renderer.setClearColor(162, 136, 121)
 
+    -- Initialize controls system
+    controls.init()
+
     print("Flight scene loaded")
-    print("Controls:")
-    print("  W/A/S/D or I/J/K/L - Thrusters")
-    print("  Space - All thrusters | N - Side pair | M - Front/Back pair")
-    print("  Arrow keys - Rotate camera")
-    print("  Tab/Esc - Pause menu")
+    print("Controls: Use " .. (controls.has_gamepad() and "gamepad or keyboard" or "keyboard"))
 end
 
 function flight_scene.update(dt)
@@ -559,8 +559,14 @@ function flight_scene.update(dt)
             else
                 altitude_warning_timer = altitude_warning_timer - dt
                 if altitude_warning_timer <= 0 then
-                    -- Time's up - destroy the ship!
-                    ship.hull_health = 0
+                    -- Time's up!
+                    if Mission.type == "race" then
+                        -- In race mode, fail the race instead of destroying ship
+                        Mission.fail_race_altitude()
+                    else
+                        -- Regular mode - destroy the ship
+                        ship.hull_health = 0
+                    end
                     altitude_warning_active = false
                 end
             end
@@ -660,8 +666,8 @@ function flight_scene.update(dt)
         return
     end
 
-    -- Disable ship controls during race countdown
-    ship.controls_disabled = Mission.is_race_countdown_active()
+    -- Disable ship controls during race countdown or when race is failed
+    ship.controls_disabled = Mission.is_race_countdown_active() or Mission.is_race_failed()
 
     -- Update ship physics (only when alive)
     ship:update(dt)
@@ -1038,8 +1044,8 @@ function flight_scene.update(dt)
         end
     end
 
-    -- Auto-level with shift key
-    if love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift") then
+    -- Auto-level
+    if controls.is_down("auto_level") then
         ship:auto_level(dt)
     end
 
@@ -1047,17 +1053,17 @@ function flight_scene.update(dt)
     local timeScale = dt * 60  -- Scale for 60 FPS equivalence
 
     if camera_mode == "free" then
-        -- FREE MODE: Arrow keys and mouse control camera rotation
-        if love.keyboard.isDown("left") then
+        -- FREE MODE: Arrow keys/right stick and mouse control camera rotation
+        if controls.is_down("camera_left") then
             cam.yaw = cam.yaw - cam_rot_speed * timeScale
         end
-        if love.keyboard.isDown("right") then
+        if controls.is_down("camera_right") then
             cam.yaw = cam.yaw + cam_rot_speed * timeScale
         end
-        if love.keyboard.isDown("up") then
+        if controls.is_down("camera_up") then
             cam.pitch = cam.pitch - cam_rot_speed * 0.6 * timeScale
         end
-        if love.keyboard.isDown("down") then
+        if controls.is_down("camera_down") then
             cam.pitch = cam.pitch + cam_rot_speed * 0.6 * timeScale
         end
 
@@ -1389,6 +1395,88 @@ function flight_scene.draw()
     Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, sky_type)
     profile(" skydome")
 
+    -- Set up checkpoint point lights for race mode
+    renderer.clearPointLights()
+    if Mission.type == "race" and Mission.race_checkpoints and Mission.race then
+        local checkpoints = Mission.race_checkpoints
+        local current_cp = Mission.race.current_checkpoint
+        local time = love.timer.getTime()
+
+        -- Checkpoint light config values
+        local cp_current_radius = config.CHECKPOINT_LIGHT_CURRENT_RADIUS or 20
+        local cp_current_intensity = config.CHECKPOINT_LIGHT_CURRENT_INTENSITY or 0.8
+        local cp_current_pulse_min = config.CHECKPOINT_LIGHT_CURRENT_PULSE_MIN or 0.7
+        local cp_current_pulse_max = config.CHECKPOINT_LIGHT_CURRENT_PULSE_MAX or 1.0
+        local cp_current_pulse_speed = config.CHECKPOINT_LIGHT_CURRENT_PULSE_SPEED or 4
+        local cp_current_color = config.CHECKPOINT_LIGHT_CURRENT_COLOR or {1.0, 0.8, 0.2}
+        local cp_next_radius = config.CHECKPOINT_LIGHT_NEXT_RADIUS or 15
+        local cp_next_intensity = config.CHECKPOINT_LIGHT_NEXT_INTENSITY or 0.3
+        local cp_next_color = config.CHECKPOINT_LIGHT_NEXT_COLOR or {0.3, 0.6, 0.8}
+        local cp_max_distance = config.CHECKPOINT_LIGHT_MAX_DISTANCE or 100
+
+        for i, cp in ipairs(checkpoints) do
+            -- Only add lights for current and next checkpoint
+            if i == current_cp or i == current_cp + 1 then
+                local dist = math.sqrt((cp.x - cam.pos.x)^2 + (cp.z - cam.pos.z)^2)
+                if dist < cp_max_distance then
+                    local ground_y = cp.ground_y or (Heightmap and Heightmap.get_height(cp.x, cp.z)) or 0
+                    local light_y = ground_y + (cp.y or 6)
+
+                    -- Current checkpoint: bright pulsing light
+                    -- Next checkpoint: dimmer light
+                    local intensity, r, g, b, radius
+                    if i == current_cp then
+                        local pulse_range = cp_current_pulse_max - cp_current_pulse_min
+                        local pulse = cp_current_pulse_min + pulse_range * (0.5 + 0.5 * math.sin(time * cp_current_pulse_speed))
+                        intensity = cp_current_intensity * pulse
+                        r, g, b = cp_current_color[1], cp_current_color[2], cp_current_color[3]
+                        radius = cp_current_radius
+                    else
+                        intensity = cp_next_intensity
+                        r, g, b = cp_next_color[1], cp_next_color[2], cp_next_color[3]
+                        radius = cp_next_radius
+                    end
+
+                    renderer.addPointLight("checkpoint_" .. i, cp.x, light_y, cp.z, radius, intensity, r, g, b)
+                end
+            end
+        end
+    end
+
+    -- Add thruster lights in night mode when thrusters are firing
+    if Mission.night_mode and ship then
+        -- Thruster light config values
+        local thr_radius = config.THRUSTER_LIGHT_RADIUS or 8
+        local thr_intensity = config.THRUSTER_LIGHT_INTENSITY or 0.6
+        local thr_flicker_min = config.THRUSTER_LIGHT_FLICKER_MIN or 0.7
+        local thr_flicker_max = config.THRUSTER_LIGHT_FLICKER_MAX or 1.0
+        local thr_flicker_speed = config.THRUSTER_LIGHT_FLICKER_SPEED or 12
+        local thr_color = config.THRUSTER_LIGHT_COLOR or {1.0, 0.6, 0.2}
+
+        for i, thruster in ipairs(ship.thrusters) do
+            if thruster.active then
+                -- Get engine position in model space
+                local engine = ship.engine_positions[i]
+                if engine then
+                    -- Transform engine position to world space
+                    local engine_world = mat4.multiplyVec4(ship:get_model_matrix(), {
+                        engine.x * ship.model_scale,
+                        engine.y * ship.model_scale,
+                        engine.z * ship.model_scale,
+                        1
+                    })
+
+                    -- Add light for thruster flame with flicker effect
+                    local time = love.timer.getTime()
+                    local flicker_range = thr_flicker_max - thr_flicker_min
+                    local flicker = thr_flicker_min + flicker_range * (0.5 + 0.5 * math.sin(time * thr_flicker_speed + i * 1.5))
+                    renderer.addPointLight("thruster_" .. i, engine_world[1], engine_world[2], engine_world[3],
+                        thr_radius, thr_intensity * flicker, thr_color[1], thr_color[2], thr_color[3])
+                end
+            end
+        end
+    end
+
     -- Draw terrain (pass camera yaw for frustum culling)
     profile(" terrain")
     Heightmap.draw(renderer, cam.pos.x, cam.pos.z, nil, 80, cam.yaw)
@@ -1597,6 +1685,55 @@ function flight_scene.draw()
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, panel_y + panel_height - 28, quit_text, 200, 255, 200)
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, panel_y + panel_height - 14, restart_text, 180, 180, 180)
     end
+
+    -- Draw race failed panel (timeout or altitude violation)
+    if Mission.is_race_failed() then
+        -- Panel dimensions
+        local panel_width = 180
+        local panel_height = 90
+        local panel_x = (config.RENDER_WIDTH - panel_width) / 2
+        local panel_y = (config.RENDER_HEIGHT - panel_height) / 2 - 10
+
+        -- Dark overlay
+        renderer.drawRectFill(0, 0, config.RENDER_WIDTH, config.RENDER_HEIGHT, 0, 0, 0, 160)
+
+        -- Draw panel background with border
+        renderer.drawRectFill(panel_x - 2, panel_y - 2, panel_width + 4, panel_height + 4, 255, 80, 80, 255)  -- Red border
+        renderer.drawRectFill(panel_x, panel_y, panel_width, panel_height, 40, 20, 20, 240)  -- Dark red background
+
+        -- Get failure reason from objectives
+        local title = "RACE FAILED"
+        local reason = ""
+        if Mission.current_objectives and Mission.current_objectives[1] then
+            if Mission.current_objectives[1] == "TIME'S UP!" then
+                title = "TIME'S UP!"
+                reason = "You ran out of time"
+            elseif Mission.current_objectives[1] == "ALTITUDE VIOLATION!" then
+                title = "ALTITUDE VIOLATION!"
+                reason = "You exceeded the altitude limit"
+            end
+        end
+
+        -- Title
+        local title_x = (config.RENDER_WIDTH - renderer.getTextWidth(title)) / 2
+        local title_y = panel_y + 12
+        renderer.drawText(title_x, title_y, title, 255, 100, 100)  -- Red text
+
+        -- Reason
+        local reason_x = (config.RENDER_WIDTH - renderer.getTextWidth(reason)) / 2
+        renderer.drawText(reason_x, title_y + 16, reason, 255, 200, 200)
+
+        -- Total time
+        local time_text = "Total time: " .. string.format("%.1f", Mission.race and Mission.race.total_time or 0) .. "s"
+        local time_x = (config.RENDER_WIDTH - renderer.getTextWidth(time_text)) / 2
+        renderer.drawText(time_x, title_y + 32, time_text, 200, 200, 200)
+
+        -- Instructions
+        local quit_text = "[Q] Return to Menu"
+        local restart_text = "[R] Try Again"
+        renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, panel_y + panel_height - 28, quit_text, 200, 255, 200)
+        renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, panel_y + panel_height - 14, restart_text, 180, 180, 180)
+    end
     profile(" hud")
 
     profile("present")
@@ -1609,6 +1746,27 @@ function flight_scene.draw()
 end
 
 function flight_scene.keypressed(key)
+    -- Notify controls system of keyboard input
+    controls.keypressed(key)
+
+    -- Handle race failure - Q to return to menu, R to restart
+    if Mission.is_race_failed() then
+        if key == "q" then
+            Mission.reset()
+            Fireworks.reset()
+            local scene_manager = require("scene_manager")
+            scene_manager.switch("menu")
+            return
+        elseif key == "r" then
+            -- Restart the same track
+            local menu = require("menu")
+            local track = menu.selected_track
+            flight_scene.load()  -- Reload scene
+            return
+        end
+        return  -- Block other inputs when race is failed
+    end
+
     -- Handle mission complete - Q to return to menu
     if Mission.is_complete() and key == "q" then
         Mission.reset()

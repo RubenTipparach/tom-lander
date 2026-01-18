@@ -86,6 +86,32 @@ config.NIGHT_FOG_START = 25               -- Fog starts closer at night
 config.NIGHT_FOG_MAX = 45                 -- Max fog distance at night
 
 -- ===========================================
+-- CHECKPOINT POINT LIGHT SETTINGS
+-- ===========================================
+config.CHECKPOINT_LIGHT_CURRENT_RADIUS = 20       -- Light radius for current checkpoint
+config.CHECKPOINT_LIGHT_CURRENT_INTENSITY = 0.8   -- Base intensity (pulsates)
+config.CHECKPOINT_LIGHT_CURRENT_PULSE_MIN = 0.7   -- Pulse minimum multiplier
+config.CHECKPOINT_LIGHT_CURRENT_PULSE_MAX = 1.0   -- Pulse maximum multiplier
+config.CHECKPOINT_LIGHT_CURRENT_PULSE_SPEED = 4   -- Pulse speed (cycles per second)
+config.CHECKPOINT_LIGHT_CURRENT_COLOR = {1.0, 0.8, 0.2}  -- Yellow/orange
+config.CHECKPOINT_LIGHT_NEXT_RADIUS = 15          -- Light radius for next checkpoint
+config.CHECKPOINT_LIGHT_NEXT_INTENSITY = 0.3      -- Intensity for next checkpoint
+config.CHECKPOINT_LIGHT_NEXT_COLOR = {0.3, 0.6, 0.8}     -- Cyan
+config.CHECKPOINT_LIGHT_MAX_DISTANCE = 100        -- Max distance to add light
+config.CHECKPOINT_LIGHT_USE_NORMALS = true        -- Use surface normals for lighting angle
+
+-- ===========================================
+-- THRUSTER POINT LIGHT SETTINGS
+-- ===========================================
+config.THRUSTER_LIGHT_RADIUS = 8                  -- Light radius
+config.THRUSTER_LIGHT_INTENSITY = 0.6             -- Base intensity
+config.THRUSTER_LIGHT_FLICKER_MIN = 0.7           -- Flicker minimum multiplier
+config.THRUSTER_LIGHT_FLICKER_MAX = 1.0           -- Flicker maximum multiplier
+config.THRUSTER_LIGHT_FLICKER_SPEED = 12          -- Flicker speed (Hz)
+config.THRUSTER_LIGHT_COLOR = {1.0, 0.6, 0.2}     -- Orange/yellow flame color
+config.THRUSTER_LIGHT_USE_NORMALS = true          -- Use surface normals for lighting angle
+
+-- ===========================================
 -- TERRAIN TEXTURE SETTINGS
 -- ===========================================
 -- Height thresholds (palette index 0-31)

@@ -5,6 +5,7 @@
 local quat = require("quat")
 local mat4 = require("mat4")
 local config = require("config")
+local controls = require("input.controls")
 
 local HUD = {}
 
@@ -251,43 +252,32 @@ function HUD.draw_controls(game_mode)
 
     local hint_x, hint_y = CONTROL_HINT_X, CONTROL_HINT_Y
 
-    -- Title
-    renderer.drawText(hint_x, hint_y, "CONTROLS:",
-                      COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
-    hint_y = hint_y + 8
-
-    -- Arcade mode controls (default)
+    -- Get control prompts based on game mode and input device
+    local control_prompts
     if game_mode ~= "simulation" then
-        renderer.drawText(hint_x, hint_y, "Space: All thrusters",
-                          COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
-        hint_y = hint_y + 7
-        renderer.drawText(hint_x, hint_y, "N:     Left+Right",
-                          COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
-        hint_y = hint_y + 7
-        renderer.drawText(hint_x, hint_y, "M:     Front+Back",
-                          COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
-        hint_y = hint_y + 7
-        renderer.drawText(hint_x, hint_y, "Shift: Auto-level",
-                          COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+        control_prompts = controls.get_prompts("arcade_controls")
     else
-        renderer.drawText(hint_x, hint_y, "W/A/S/D: Thrusters",
-                          COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
-        hint_y = hint_y + 7
-        renderer.drawText(hint_x, hint_y, "Manual flight!",
-                          COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+        control_prompts = controls.get_prompts("simulation_controls")
     end
 
-    hint_y = hint_y + 10
+    -- Draw control prompts
+    for i, line in ipairs(control_prompts) do
+        local color = (i == 1) and COLOR_WHITE or COLOR_GREY  -- Title in white, rest in grey
+        renderer.drawText(hint_x, hint_y, line,
+                          color[1], color[2], color[3], 1, true)
+        hint_y = hint_y + (i == 1 and 8 or 7)  -- More space after title
+    end
+
+    hint_y = hint_y + 3
 
     -- Camera controls
-    renderer.drawText(hint_x, hint_y, "CAMERA:",
-                      COLOR_WHITE[1], COLOR_WHITE[2], COLOR_WHITE[3], 1, true)
-    hint_y = hint_y + 8
-    renderer.drawText(hint_x, hint_y, "Mouse: Drag to rotate",
-                      COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
-    hint_y = hint_y + 7
-    renderer.drawText(hint_x, hint_y, "Arrows: Rotate camera",
-                      COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
+    local camera_prompts = controls.get_prompts("camera_controls")
+    for i, line in ipairs(camera_prompts) do
+        local color = (i == 1) and COLOR_WHITE or COLOR_GREY
+        renderer.drawText(hint_x, hint_y, line,
+                          color[1], color[2], color[3], 1, true)
+        hint_y = hint_y + (i == 1 and 8 or 7)
+    end
 end
 
 -- Draw mission panel (top-left objectives - text only, no box)
@@ -403,20 +393,23 @@ function HUD.draw_pause_menu()
         text_y = text_y + 4
     end
 
-    -- Options
-    local option1 = "[Tab] Resume"
+    -- Options (use controls module for input-aware prompts)
+    local pause_prompts = controls.get_prompts("pause_menu")
+    local option1 = pause_prompts[1] or "[Tab] Resume"
     local option1_x = box_x + (box_width - getTextWidth(option1)) / 2
     renderer.drawText(option1_x, text_y, option1,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
     text_y = text_y + line_height
 
-    local option2 = "[C] " .. (show_controls and "Hide" or "Show") .. " Controls"
+    -- Toggle controls text varies based on state
+    local toggle_verb = show_controls and "Hide" or "Show"
+    local option2 = controls.get_prompt_bracketed("toggle_controls") .. " " .. toggle_verb .. " Controls"
     local option2_x = box_x + (box_width - getTextWidth(option2)) / 2
     renderer.drawText(option2_x, text_y, option2,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
     text_y = text_y + line_height
 
-    local option3 = "[Q] Return to Menu"
+    local option3 = pause_prompts[3] or "[Q] Return to Menu"
     local option3_x = box_x + (box_width - getTextWidth(option3)) / 2
     renderer.drawText(option3_x, text_y, option3,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
@@ -634,16 +627,24 @@ function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
 end
 
--- Draw WASD thruster indicator
--- Projects thruster positions to screen space and draws key letters on top
+-- Draw thruster indicator
+-- Projects thruster positions to screen space and draws key/direction labels on top
 function HUD.draw_thruster_indicator(ship)
     if not ship or not ship.thrusters or not ship.engine_positions then return end
     if not renderer.worldToScreen then return end  -- Need projection function
     if not ship.orientation then return end  -- Need ship orientation for rotation
     if ship:is_destroyed() then return end  -- Hide when ship is destroyed
 
+    -- Get thruster labels from controls module (keyboard: WASD, gamepad: arrows)
     -- Thruster mapping: 1=Right(D), 2=Left(A), 3=Front(W), 4=Back(S)
-    local thruster_keys = {"D", "A", "W", "S"}
+    local thruster_keys = {"D", "A", "W", "S"}  -- Default fallback
+    -- Map thruster index to label: 1->D(4), 2->A(2), 3->W(1), 4->S(3)
+    for i = 1, 4 do
+        local label = controls.get_thruster_label(i)
+        if label then
+            thruster_keys[i] = label
+        end
+    end
     local scale = ship.model_scale
 
     -- Build the same model matrix as Ship:draw uses
@@ -753,7 +754,11 @@ function HUD.draw_camera_mode(mode)
     local screen_w = config.RENDER_WIDTH
     local screen_h = config.RENDER_HEIGHT
 
-    local mode_text = "[F] CAM: " .. string.upper(mode)
+    -- Use controls module for input-aware prompt
+    local mode_text = controls.get_camera_mode_prompt(mode)
+    if not mode_text or mode_text == "" then
+        mode_text = "[F] CAM: " .. string.upper(mode)
+    end
     local text_x = screen_w - getTextWidth(mode_text) - 10
     local text_y = screen_h - 45
 

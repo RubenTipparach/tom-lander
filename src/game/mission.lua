@@ -875,4 +875,30 @@ function Mission.is_race_countdown_active()
     return Mission.race.countdown_active == true
 end
 
+-- Check if race has failed (timeout or altitude violation)
+function Mission.is_race_failed()
+    if Mission.type ~= "race" or not Mission.race then
+        return false
+    end
+    return Mission.race.failed == true
+end
+
+-- Fail the race due to altitude limit violation
+function Mission.fail_race_altitude()
+    if Mission.type ~= "race" or not Mission.race then
+        return
+    end
+    if Mission.race.failed then return end  -- Already failed
+
+    Mission.race.failed = true
+    Mission.complete_flag = true  -- Allow returning to menu with Q
+    Mission.current_objectives = {
+        "ALTITUDE VIOLATION!",
+        "You exceeded the altitude limit.",
+        "Total time: " .. string.format("%.1f", Mission.race.total_time) .. "s",
+        "[Q] Return to Menu"
+    }
+    print("[RACE] Failed - Altitude limit exceeded")
+end
+
 return Mission

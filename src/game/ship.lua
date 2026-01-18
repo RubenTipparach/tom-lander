@@ -7,6 +7,7 @@ local gameConfig = require("config")
 local vec3 = require("vec3")
 local mat4 = require("mat4")
 local quat = require("quat")
+local controls = require("input.controls")
 
 local Ship = {}
 Ship.__index = Ship
@@ -180,7 +181,7 @@ function Ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
     self.explosion_timer = 0
 end
 
--- Update thruster states from keyboard (called from flight_scene)
+-- Update thruster states from input (keyboard or gamepad)
 function Ship:update_thrusters()
     -- If controls are disabled (e.g., race countdown), turn off all thrusters
     if self.controls_disabled then
@@ -190,46 +191,42 @@ function Ship:update_thrusters()
         return
     end
 
-    -- Check each key separately (like Picotron)
-    local w_pressed = love.keyboard.isDown("w") or love.keyboard.isDown("i")
-    local a_pressed = love.keyboard.isDown("a") or love.keyboard.isDown("j")
-    local s_pressed = love.keyboard.isDown("s") or love.keyboard.isDown("k")
-    local d_pressed = love.keyboard.isDown("d") or love.keyboard.isDown("l")
-
-    -- Yaw controls (Q = yaw left, E = yaw right)
-    local q_pressed = love.keyboard.isDown("q")
-    local e_pressed = love.keyboard.isDown("e")
+    -- Check thruster inputs using controls module
+    local w_pressed = controls.is_down("thruster_front")
+    local a_pressed = controls.is_down("thruster_left")
+    local s_pressed = controls.is_down("thruster_back")
+    local d_pressed = controls.is_down("thruster_right")
 
     -- Arcade mode special keys
-    local space_pressed = love.keyboard.isDown("space")
-    local n_pressed = love.keyboard.isDown("n")
-    local m_pressed = love.keyboard.isDown("m")
+    local space_pressed = controls.is_down("thruster_all")
+    local n_pressed = controls.is_down("thruster_sides")
+    local m_pressed = controls.is_down("thruster_frontback")
 
     if space_pressed then
-        -- Space: fire all thrusters
+        -- All thrusters
         self.thrusters[1].active = true
         self.thrusters[2].active = true
         self.thrusters[3].active = true
         self.thrusters[4].active = true
     elseif n_pressed then
-        -- N: fire left/right pair (A+D)
+        -- Left/right pair (sides)
         self.thrusters[1].active = true
         self.thrusters[2].active = true
         self.thrusters[3].active = false
         self.thrusters[4].active = false
     elseif m_pressed then
-        -- M: fire front/back pair (W+S)
+        -- Front/back pair
         self.thrusters[1].active = false
         self.thrusters[2].active = false
         self.thrusters[3].active = true
         self.thrusters[4].active = true
     else
-        -- Normal WASD/IJKL controls (matching Picotron mapping)
-        -- Thruster 1 = Right side (D key), Thruster 2 = Left side (A key)
-        self.thrusters[1].active = d_pressed  -- Right thruster (D)
-        self.thrusters[2].active = a_pressed  -- Left thruster (A)
-        self.thrusters[3].active = w_pressed  -- Front thruster (W)
-        self.thrusters[4].active = s_pressed  -- Back thruster (S)
+        -- Normal controls (matching Picotron mapping)
+        -- Thruster 1 = Right side (D), Thruster 2 = Left side (A)
+        self.thrusters[1].active = d_pressed  -- Right thruster
+        self.thrusters[2].active = a_pressed  -- Left thruster
+        self.thrusters[3].active = w_pressed  -- Front thruster
+        self.thrusters[4].active = s_pressed  -- Back thruster
     end
 end
 
@@ -269,33 +266,33 @@ function Ship:update(dt)
         end
     end
 
-    -- Apply yaw control from Q/E keys (scaled by dt)
-    -- Q = yaw left (positive), E = yaw right (negative)
+    -- Apply yaw control (scaled by dt)
+    -- Yaw left = positive, yaw right = negative
     local yaw_torque = gameConfig.VTOL_TORQUE_ROLL  -- Use same torque as roll
-    if love.keyboard.isDown("q") then
+    if controls.is_down("yaw_left") then
         self.local_vyaw = self.local_vyaw + yaw_torque * timeScale
     end
-    if love.keyboard.isDown("e") then
+    if controls.is_down("yaw_right") then
         self.local_vyaw = self.local_vyaw - yaw_torque * timeScale
     end
 
-    -- Apply rotation control from WASD when space is held (hover + rotate mode)
+    -- Apply rotation control when all thrusters are held (hover + rotate mode)
     -- This allows rotating the ship while maintaining lift with all thrusters
     -- Uses same torque directions as normal thruster torque, but halved
-    if love.keyboard.isDown("space") then
+    if controls.is_down("thruster_all") then
         local rotation_torque = gameConfig.VTOL_TORQUE_PITCH * 0.5  -- Halved for gentler control
-        -- W/S = pitch (same as front/back thruster torque: W adds pitch, S subtracts)
-        if love.keyboard.isDown("w") or love.keyboard.isDown("i") then
+        -- Front/Back = pitch
+        if controls.is_down("thruster_front") then
             self.local_vpitch = self.local_vpitch + rotation_torque * timeScale
         end
-        if love.keyboard.isDown("s") or love.keyboard.isDown("k") then
+        if controls.is_down("thruster_back") then
             self.local_vpitch = self.local_vpitch - rotation_torque * timeScale
         end
-        -- A/D = roll (same as left/right thruster torque: A adds roll, D subtracts)
-        if love.keyboard.isDown("a") or love.keyboard.isDown("j") then
+        -- Left/Right = roll
+        if controls.is_down("thruster_left") then
             self.local_vroll = self.local_vroll + rotation_torque * timeScale
         end
-        if love.keyboard.isDown("d") or love.keyboard.isDown("l") then
+        if controls.is_down("thruster_right") then
             self.local_vroll = self.local_vroll - rotation_torque * timeScale
         end
     end

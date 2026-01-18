@@ -176,6 +176,20 @@ function renderer_dda.isDitherEnabled()
     return ditherEnabled
 end
 
+-- Point light stubs (GPU renderer handles these, DDA uses per-vertex lighting module)
+function renderer_dda.addPointLight(id, x, y, z, radius, intensity, r, g, b)
+    -- DDA renderer uses lighting.lua module for point lights
+    -- This is a stub for API compatibility
+end
+
+function renderer_dda.removePointLight(id)
+    -- Stub for API compatibility
+end
+
+function renderer_dda.clearPointLights()
+    -- Stub for API compatibility
+end
+
 -- Set pixel with Z-buffer test (FFI optimized)
 local function setPixel(x, y, z, r, g, b)
     if x < 0 or x >= RENDER_WIDTH or y < 0 or y >= RENDER_HEIGHT then

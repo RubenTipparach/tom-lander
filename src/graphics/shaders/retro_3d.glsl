@@ -22,6 +22,13 @@ uniform float u_shadowBrightnessMax;   // Brightness for original color
 uniform float u_shadowDitherRange;     // Range of blend where dithering occurs (0-1)
 uniform Image u_paletteShadowLookup;   // 32x8 texture: palette shadows lookup (x=color, y=level)
 
+// Point lights (max 4)
+uniform int u_pointLightCount;
+uniform vec3 u_pointLightPos[4];
+uniform float u_pointLightRadius[4];
+uniform float u_pointLightIntensity[4];
+uniform float u_pointLightUseNormals;  // 1.0 = use N·L calculation, 0.0 = omnidirectional
+
 #ifdef VERTEX
 varying vec4 worldPosition;
 varying vec4 viewPosition;
@@ -51,11 +58,12 @@ vec4 position(mat4 transformProjection, vec4 vertexPosition) {
 #endif
 
 #ifdef PIXEL
+varying vec4 worldPosition;
 varying vec2 v_texCoord;
 varying vec4 v_color;
 varying float v_viewDist;
 
-// Bayer 4x4 dithering matrix
+// Bayer 4x4 dithering matrix (moved before calculatePointLights)
 float getBayerValue(vec2 screenPos) {
     int x = int(mod(screenPos.x, 4.0));
     int y = int(mod(screenPos.y, 4.0));
@@ -77,6 +85,57 @@ float getBayerValue(vec2 screenPos) {
     if (idx == 13) return 7.0/16.0;
     if (idx == 14) return 13.0/16.0;
     return 5.0/16.0;
+}
+
+// Estimate surface normal from screen-space derivatives of world position
+// This approximates the face normal for 3D objects
+vec3 estimateSurfaceNormal(vec3 worldPos) {
+    vec3 dFdxPos = dFdx(worldPos);
+    vec3 dFdyPos = dFdy(worldPos);
+    return normalize(cross(dFdxPos, dFdyPos));
+}
+
+// Calculate point light contribution at a world position with dithered falloff
+// Uses N·L dot product for angle-based lighting when enabled
+float calculatePointLights(vec3 worldPos, vec2 screenCoords) {
+    float totalLight = 0.0;
+    float ditherThreshold = getBayerValue(screenCoords);
+
+    // Estimate surface normal from screen-space derivatives
+    vec3 worldNormal = estimateSurfaceNormal(worldPos);
+
+    for (int i = 0; i < 4; i++) {
+        if (i >= u_pointLightCount) break;
+
+        vec3 lightPos = u_pointLightPos[i];
+        float radius = u_pointLightRadius[i];
+        float intensity = u_pointLightIntensity[i];
+
+        vec3 toLight = lightPos - worldPos;
+        float dist = length(toLight);
+
+        // Dithered falloff within radius
+        if (dist < radius) {
+            float attenuation = 1.0 - (dist / radius);
+
+            // Apply N·L angle factor if normals are enabled
+            float angleFactor = 1.0;
+            if (u_pointLightUseNormals > 0.5 && dist > 0.01) {
+                vec3 lightDir = toLight / dist;  // Normalized direction to light
+                float NdotL = dot(worldNormal, lightDir);
+                // Clamp to 0-1 range (surfaces facing away get no light)
+                angleFactor = max(0.0, NdotL);
+            }
+
+            // Use dithering for smooth falloff at edges
+            float finalAttenuation = attenuation * angleFactor;
+            if (finalAttenuation > ditherThreshold * 0.3) {
+                totalLight += intensity * finalAttenuation;
+            }
+        }
+    }
+
+    return totalLight;
 }
 
 // Find closest palette index for a given RGB color by searching the lookup texture
@@ -148,6 +207,10 @@ vec4 effect(vec4 color, Image tex, vec2 texture_coords, vec2 screen_coords) {
     // When palette shadows are disabled, we'll just use RGB darkening at the end
     {
         float brightness = v_color.r;  // Brightness stored in RGB channels (all same value)
+
+        // Add point light contribution (additive, with dithered falloff)
+        float pointLightContrib = calculatePointLights(worldPosition.xyz, screen_coords);
+        brightness = clamp(brightness + pointLightContrib, 0.0, 1.0);
 
         // Check for unlit objects (brightness >= 0.999 means no lighting/shadows applied)
         // For unlit objects like flames/clouds, skip lighting but still apply alpha for dithering
