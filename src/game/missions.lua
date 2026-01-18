@@ -181,6 +181,11 @@ function Missions.start_mission_7(Mission)
         ""
     }
     Mission.current_mission_num = 7
+    -- Start countdown
+    Mission.countdown = {
+        active = true,
+        timer = Mission.COUNTDOWN_DURATION,
+    }
 
     -- Set landing pad for reference
     local target_pad = LandingPads.get_pad(1)

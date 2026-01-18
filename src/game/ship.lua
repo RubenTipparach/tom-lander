@@ -60,10 +60,10 @@ function Ship.new(config)
     -- Matching Picotron: Right engine = D key, Left engine = A key
     -- 1=Right(D), 2=Left(A), 3=Front(W), 4=Back(S)
     self.thrusters = {
-        {x = 6 * self.model_scale, z = 0, key = "D", active = false},   -- Thruster 1: Right side, key D
-        {x = -6 * self.model_scale, z = 0, key = "A", active = false},  -- Thruster 2: Left side, key A
-        {x = 0, z = 6 * self.model_scale, key = "W", active = false},   -- Thruster 3: Front, key W
-        {x = 0, z = -6 * self.model_scale, key = "S", active = false},  -- Thruster 4: Back, key S
+        {x = 6 * self.model_scale, z = 0, key = "D", active = false, power = 0, flame_power = 0},   -- Thruster 1: Right side, key D
+        {x = -6 * self.model_scale, z = 0, key = "A", active = false, power = 0, flame_power = 0},  -- Thruster 2: Left side, key A
+        {x = 0, z = 6 * self.model_scale, key = "W", active = false, power = 0, flame_power = 0},   -- Thruster 3: Front, key W
+        {x = 0, z = -6 * self.model_scale, key = "S", active = false, power = 0, flame_power = 0},  -- Thruster 4: Back, key S
     }
 
     -- Engine positions for flame rendering (unscaled, in model space)
@@ -182,51 +182,78 @@ function Ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
 end
 
 -- Update thruster states from input (keyboard or gamepad)
+-- Uses analog input for variable thrust power on gamepad
+-- When RT/Space held: LS/WASD only adds rotation, not thrust (prevents going faster while rotating)
+-- Flame power: RT/Space = 1.0, LS/WASD adds 0.2 visual boost when combined
 function Ship:update_thrusters()
     -- If controls are disabled (e.g., race countdown), turn off all thrusters
     if self.controls_disabled then
         for i = 1, 4 do
             self.thrusters[i].active = false
+            self.thrusters[i].power = 0
+            self.thrusters[i].flame_power = 0
         end
         return
     end
 
-    -- Check thruster inputs using controls module
-    local w_pressed = controls.is_down("thruster_front")
-    local a_pressed = controls.is_down("thruster_left")
-    local s_pressed = controls.is_down("thruster_back")
-    local d_pressed = controls.is_down("thruster_right")
+    -- Get analog values for each thruster (0-1 range)
+    -- Keyboard returns 1.0 when pressed, gamepad returns analog stick/trigger value
+    local w_power = controls.get_axis("thruster_front")
+    local a_power = controls.get_axis("thruster_left")
+    local s_power = controls.get_axis("thruster_back")
+    local d_power = controls.get_axis("thruster_right")
 
-    -- Arcade mode special keys
-    local space_pressed = controls.is_down("thruster_all")
+    -- Arcade mode special controls (also analog for RT)
+    local all_power = controls.get_axis("thruster_all")
     local n_pressed = controls.is_down("thruster_sides")
     local m_pressed = controls.is_down("thruster_frontback")
 
-    if space_pressed then
-        -- All thrusters
-        self.thrusters[1].active = true
-        self.thrusters[2].active = true
-        self.thrusters[3].active = true
-        self.thrusters[4].active = true
-    elseif n_pressed then
-        -- Left/right pair (sides)
-        self.thrusters[1].active = true
-        self.thrusters[2].active = true
-        self.thrusters[3].active = false
-        self.thrusters[4].active = false
-    elseif m_pressed then
-        -- Front/back pair
-        self.thrusters[1].active = false
-        self.thrusters[2].active = false
-        self.thrusters[3].active = true
-        self.thrusters[4].active = true
+    -- Individual powers array (matching Picotron mapping)
+    -- Thruster 1 = Right side (D), Thruster 2 = Left side (A)
+    -- Thruster 3 = Front (W), Thruster 4 = Back (S)
+    local individual = {d_power, a_power, w_power, s_power}
+
+    -- Calculate thrust power and flame power separately
+    local powers = {0, 0, 0, 0}
+    local flame_powers = {0, 0, 0, 0}
+
+    if all_power > 0 then
+        -- RT/Space held: thrust comes only from RT, LS/WASD adds rotation only (handled elsewhere)
+        -- Flame gets small visual boost from individual inputs
+        local boost = gameConfig.FLAME_COMBINED_BOOST or 0.2
+        for i = 1, 4 do
+            powers[i] = all_power  -- Thrust = RT only
+            flame_powers[i] = all_power + boost * individual[i]  -- Visual boost from LS/WASD
+        end
     else
-        -- Normal controls (matching Picotron mapping)
-        -- Thruster 1 = Right side (D), Thruster 2 = Left side (A)
-        self.thrusters[1].active = d_pressed  -- Right thruster
-        self.thrusters[2].active = a_pressed  -- Left thruster
-        self.thrusters[3].active = w_pressed  -- Front thruster
-        self.thrusters[4].active = s_pressed  -- Back thruster
+        -- No RT/Space: individual controls work normally
+        for i = 1, 4 do
+            powers[i] = individual[i]
+            flame_powers[i] = individual[i]
+        end
+    end
+
+    -- N key adds power to sides (thrusters 1 and 2)
+    if n_pressed then
+        powers[1] = powers[1] + 1.0
+        powers[2] = powers[2] + 1.0
+        flame_powers[1] = flame_powers[1] + 1.0
+        flame_powers[2] = flame_powers[2] + 1.0
+    end
+
+    -- M key adds power to front/back (thrusters 3 and 4)
+    if m_pressed then
+        powers[3] = powers[3] + 1.0
+        powers[4] = powers[4] + 1.0
+        flame_powers[3] = flame_powers[3] + 1.0
+        flame_powers[4] = flame_powers[4] + 1.0
+    end
+
+    -- Apply final power values to thrusters
+    for i = 1, 4 do
+        self.thrusters[i].power = powers[i]
+        self.thrusters[i].flame_power = flame_powers[i]
+        self.thrusters[i].active = powers[i] > 0 or flame_powers[i] > 0
     end
 end
 
@@ -247,22 +274,25 @@ function Ship:update(dt)
     self.vy = self.vy + self.gravity * timeScale
 
     -- Apply thrust and torque for each active thruster
+    -- Uses analog power value (0-1) for variable thrust strength
     for i, thruster in ipairs(self.thrusters) do
-        if thruster.active then
+        if thruster.active and thruster.power > 0 then
+            local power = thruster.power  -- 0-1 analog value
+
             -- Thrust direction is always upward in local space (0, 1, 0)
             -- Transform by quaternion to get world space thrust
             local tx, ty, tz = quat.rotateVector(self.orientation, 0, 1, 0)
 
-            -- Apply thrust in world space (scaled by dt)
-            self.vx = self.vx + tx * self.thrust * timeScale
-            self.vy = self.vy + ty * self.thrust * timeScale
-            self.vz = self.vz + tz * self.thrust * timeScale
+            -- Apply thrust in world space (scaled by power and dt)
+            self.vx = self.vx + tx * self.thrust * power * timeScale
+            self.vy = self.vy + ty * self.thrust * power * timeScale
+            self.vz = self.vz + tz * self.thrust * power * timeScale
 
-            -- Apply torque as angular velocity in LOCAL space (scaled by dt)
+            -- Apply torque as angular velocity in LOCAL space (scaled by power and dt)
             -- Thruster on front/back (z != 0) creates pitch around local X axis
             -- Thruster on left/right (x != 0) creates roll around local Z axis
-            self.local_vpitch = self.local_vpitch + thruster.z * gameConfig.VTOL_TORQUE_PITCH * timeScale
-            self.local_vroll = self.local_vroll + (-thruster.x) * gameConfig.VTOL_TORQUE_ROLL * timeScale
+            self.local_vpitch = self.local_vpitch + thruster.z * gameConfig.VTOL_TORQUE_PITCH * power * timeScale
+            self.local_vroll = self.local_vroll + (-thruster.x) * gameConfig.VTOL_TORQUE_ROLL * power * timeScale
         end
     end
 
@@ -278,22 +308,26 @@ function Ship:update(dt)
 
     -- Apply rotation control when all thrusters are held (hover + rotate mode)
     -- This allows rotating the ship while maintaining lift with all thrusters
-    -- Uses same torque directions as normal thruster torque, but halved
-    if controls.is_down("thruster_all") then
+    -- Uses analog stick values for proportional rotation control
+    if controls.get_axis("thruster_all") > 0 then
         local rotation_torque = gameConfig.VTOL_TORQUE_PITCH * 0.5  -- Halved for gentler control
-        -- Front/Back = pitch
-        if controls.is_down("thruster_front") then
-            self.local_vpitch = self.local_vpitch + rotation_torque * timeScale
+        -- Front/Back = pitch (use analog values)
+        local front_power = controls.get_axis("thruster_front")
+        local back_power = controls.get_axis("thruster_back")
+        if front_power > 0 then
+            self.local_vpitch = self.local_vpitch + rotation_torque * front_power * timeScale
         end
-        if controls.is_down("thruster_back") then
-            self.local_vpitch = self.local_vpitch - rotation_torque * timeScale
+        if back_power > 0 then
+            self.local_vpitch = self.local_vpitch - rotation_torque * back_power * timeScale
         end
-        -- Left/Right = roll
-        if controls.is_down("thruster_left") then
-            self.local_vroll = self.local_vroll + rotation_torque * timeScale
+        -- Left/Right = roll (use analog values)
+        local left_power = controls.get_axis("thruster_left")
+        local right_power = controls.get_axis("thruster_right")
+        if left_power > 0 then
+            self.local_vroll = self.local_vroll + rotation_torque * left_power * timeScale
         end
-        if controls.is_down("thruster_right") then
-            self.local_vroll = self.local_vroll - rotation_torque * timeScale
+        if right_power > 0 then
+            self.local_vroll = self.local_vroll - rotation_torque * right_power * timeScale
         end
     end
 
@@ -340,10 +374,15 @@ end
 
 -- Auto-level the ship (smoothly returns to upright orientation)
 -- Called when shift key is held
-function Ship:auto_level(dt)
+function Ship:auto_level(dt, strength)
+    -- strength: 0-1 analog value (1.0 = full auto-level, lower = gentler)
+    strength = strength or 1.0
+
     -- Frame-rate independent lerp factor (tuned for 60 FPS base)
     local timeScale = dt * 60
-    local level_speed = 1.0 - math.pow(0.95, timeScale)
+    -- Scale the leveling speed by analog strength (0.95 base, up to stronger leveling at 0.90)
+    local base_factor = 0.95 + (1.0 - strength) * 0.04  -- Range: 0.95 (full) to 0.99 (minimal)
+    local level_speed = 1.0 - math.pow(base_factor, timeScale)
 
     -- Extract the ship's forward direction from the quaternion
     -- This is more robust than extracting Euler angles when pitch/roll are non-zero
@@ -364,8 +403,9 @@ function Ship:auto_level(dt)
     self.orientation = quat.slerp(self.orientation, target, level_speed)
     self.orientation = quat.normalize(self.orientation)
 
-    -- Also dampen angular velocities heavily (frame-rate independent)
-    local angularDamping = math.pow(0.8, timeScale)
+    -- Also dampen angular velocities (scaled by strength)
+    local base_damping = 0.8 + (1.0 - strength) * 0.15  -- Range: 0.80 (strong) to 0.95 (gentle)
+    local angularDamping = math.pow(base_damping, timeScale)
     self.local_vpitch = self.local_vpitch * angularDamping
     self.local_vroll = self.local_vroll * angularDamping
 end
@@ -436,7 +476,11 @@ function Ship:draw_flames(renderer, shipModelMatrix)
 
             -- Build flame matrix: scale flame mesh, translate to engine position, apply ship rotation and translate
             -- This matches Picotron where flames are part of ship mesh and rotated together
-            local flameScale = self.model_scale * scale_mod
+            -- Scale flame by flame_power (configurable min and range)
+            local scale_min = gameConfig.FLAME_SCALE_MIN or 0.3
+            local scale_range = gameConfig.FLAME_SCALE_RANGE or 0.7
+            local power_scale = scale_min + scale_range * thruster.flame_power
+            local flameScale = self.model_scale * scale_mod * power_scale
 
             -- Start with flame scale
             local flameMatrix = mat4.scale(flameScale, flameScale * 1.2, flameScale)

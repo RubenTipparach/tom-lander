@@ -5,6 +5,7 @@ local Cargo = require("cargo")
 local Constants = require("constants")
 local SaveData = require("save_data")
 local config = require("config")
+local controls = require("input.controls")
 
 local Mission = {}
 
@@ -73,6 +74,13 @@ Mission.lap_just_completed = false  -- True for one frame when a lap finishes (f
 Mission.race_just_completed = false  -- True for one frame when race finishes (for big fireworks)
 Mission.night_mode = false  -- True for night racing tracks (tracks 3 and 4)
 
+-- General countdown state (for all mission types)
+Mission.countdown = {
+    active = false,
+    timer = 0,
+}
+Mission.COUNTDOWN_DURATION = 4.0  -- 4 seconds: 3, 2, 1, GO!
+
 -- Initialize a hover mission (take off, hover, land)
 function Mission.start_hover_mission(hover_duration, landing_pad_x, landing_pad_z, landing_pad_id)
     Mission.active = true
@@ -81,6 +89,11 @@ function Mission.start_hover_mission(hover_duration, landing_pad_x, landing_pad_
     Mission.hover_timer = 0
     Mission.hover_duration = hover_duration
     Mission.show_pause_menu = false
+    -- Start countdown
+    Mission.countdown = {
+        active = true,
+        timer = Mission.COUNTDOWN_DURATION,
+    }
 
     -- Store landing pad position and ID
     Mission.landing_pad_pos.x = landing_pad_x
@@ -108,6 +121,11 @@ function Mission.start_cargo_mission(cargo_coords, landing_pad_x, landing_pad_z,
     Mission.total_cargo = #cargo_coords
     Mission.collected_cargo = 0
     Mission.show_pause_menu = false
+    -- Start countdown
+    Mission.countdown = {
+        active = true,
+        timer = Mission.COUNTDOWN_DURATION,
+    }
 
     -- Store landing pad position and ID
     Mission.landing_pad_pos.x = landing_pad_x or 0
@@ -167,9 +185,26 @@ function Mission.update(dt, ship, current_landing_pad)
     local ship_landed = current_landing_pad ~= nil
     local engines_off = not ship.thrusting
 
-    -- Handle race mission
+    -- Handle race mission (has its own countdown logic)
     if Mission.type == "race" then
         Mission.update_race(dt, ship_x, ship_y, ship_z)
+        return
+    end
+
+    -- Handle general countdown for non-race missions
+    if Mission.countdown and Mission.countdown.active then
+        Mission.countdown.timer = Mission.countdown.timer - dt
+
+        -- Countdown finished
+        if Mission.countdown.timer <= 0 then
+            Mission.countdown.active = false
+            print("[MISSION] Countdown finished - GO!")
+        end
+        return  -- Don't update mission logic during countdown
+    end
+
+    -- Free flight mode - no mission objectives after countdown
+    if Mission.type == "free_flight" then
         return
     end
 
@@ -301,7 +336,7 @@ function Mission.update_race(dt, ship_x, ship_y, ship_z)
             "TIME'S UP!",
             "Total time: " .. string.format("%.1f", race.total_time) .. "s",
             "",
-            "[Q] Return to Menu"
+            controls.get_prompt_bracketed("quit_to_menu") .. " Return to Menu"
         }
         return
     end
@@ -399,7 +434,7 @@ function Mission.complete_race()
         "RACE COMPLETE!",
         "Total time: " .. minutes .. ":" .. string.format("%05.2f", seconds),
         "",
-        "[Q] Return to Menu"
+        controls.get_prompt_bracketed("quit_to_menu") .. " Return to Menu"
     }
 end
 
@@ -419,7 +454,7 @@ function Mission.complete()
         "MISSION COMPLETE!",
         completion_text,
         "",
-        "[Q] Return to Menu"
+        controls.get_prompt_bracketed("quit_to_menu") .. " Return to Menu"
     }
 
     -- Unlock next mission
@@ -452,6 +487,11 @@ function Mission.reset()
     Mission.lap_just_completed = false
     Mission.race_just_completed = false
     Mission.night_mode = false
+    -- Reset countdown state
+    Mission.countdown = {
+        active = false,
+        timer = 0,
+    }
 end
 
 -- Get mission data for HUD
@@ -875,6 +915,36 @@ function Mission.is_race_countdown_active()
     return Mission.race.countdown_active == true
 end
 
+-- Check if any countdown is active (race or general mission)
+-- Returns true if controls should be disabled
+function Mission.is_countdown_active()
+    -- Check race countdown
+    if Mission.type == "race" and Mission.race and Mission.race.countdown_active then
+        return true
+    end
+    -- Check general countdown
+    if Mission.countdown and Mission.countdown.active then
+        return true
+    end
+    return false
+end
+
+-- Get countdown data for HUD display
+function Mission.get_countdown_data()
+    -- For race missions, use race countdown
+    if Mission.type == "race" and Mission.race then
+        return {
+            active = Mission.race.countdown_active,
+            timer = Mission.race.countdown_timer,
+        }
+    end
+    -- For other missions, use general countdown
+    return {
+        active = Mission.countdown and Mission.countdown.active or false,
+        timer = Mission.countdown and Mission.countdown.timer or 0,
+    }
+end
+
 -- Check if race has failed (timeout or altitude violation)
 function Mission.is_race_failed()
     if Mission.type ~= "race" or not Mission.race then
@@ -896,7 +966,7 @@ function Mission.fail_race_altitude()
         "ALTITUDE VIOLATION!",
         "You exceeded the altitude limit.",
         "Total time: " .. string.format("%.1f", Mission.race.total_time) .. "s",
-        "[Q] Return to Menu"
+        controls.get_prompt_bracketed("quit_to_menu") .. " Return to Menu"
     }
     print("[RACE] Failed - Altitude limit exceeded")
 end

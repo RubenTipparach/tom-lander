@@ -7,9 +7,9 @@ local camera_module = require("camera")
 local mat4 = require("mat4")
 local vec3 = require("vec3")
 local quat = require("quat")
-local Ship = require("ship")
+local Ship = require("game.ship")
 local ParticleSystem = require("particle_system")
-local SpeedLines = require("speed_lines")
+local SpeedLines = require("game.speed_lines")
 local Minimap = require("minimap")
 local Constants = require("constants")
 local Heightmap = require("heightmap")
@@ -37,92 +37,135 @@ local controls = require("input.controls")
 
 local flight_scene = {}
 
--- Scene state
-local ship
-local cam
-local smoke_system
-local speed_lines
-local softwareImage  -- Only used by software renderer, unused with GPU renderer
-local projMatrix
-local follow_camera = true
+-- Consolidate all mutable state into a single table to reduce upvalues
+local S = {
+    -- Scene objects
+    ship = nil,
+    cam = nil,
+    smoke_system = nil,
+    speed_lines = nil,
+    softwareImage = nil,
+    projMatrix = nil,
+    -- Camera state
+    camera_mode = config.CAMERA_FOLLOW_MODE_ENABLED and "follow" or "free",
+    prev_camera_mode = config.CAMERA_FOLLOW_MODE_ENABLED and "follow" or "free",
+    cam_dist = config.CAMERA_DISTANCE_MIN,
+    last_mouse_x = 0,
+    last_mouse_y = 0,
+    mouse_camera_enabled = false,
+    follow_cam_debug_timer = 0,
+    cam_orientation = nil,
+    -- World objects
+    buildings = {},
+    building_configs = {},
+    cargo_items = {},
+    -- Game mode and mission
+    game_mode = "arcade",
+    current_mission_num = nil,
+    current_track_num = nil,
+    -- Combat state
+    combat_active = false,
+    wave_start_delay = 0,
+    weapons_enabled = true,
+    -- Race victory state
+    race_victory_mode = false,
+    race_victory_cam_angle = 0,
+    race_victory_ship_pos = {x = 0, y = 0, z = 0},
+    race_victory_timer = 0,
+    -- Mission complete state
+    mission_complete_mode = false,
+    mission_complete_cam_angle = 0,
+    mission_complete_ship_pos = {x = 0, y = 0, z = 0},
+    mission_complete_timer = 0,
+    -- Ship death state
+    ship_death_mode = false,
+    ship_death_timer = 0,
+    ship_death_explosion_count = 0,
+    ship_death_pos = {x = 0, y = 0, z = 0},
+    ship_death_landed = false,
+    -- Altitude warning
+    altitude_warning_active = false,
+    altitude_warning_timer = 0,
+    altitude_limit = nil,
+    -- Repair state
+    repair_timer = 0,
+    is_repairing = false,
+}
 
--- Camera mode: "follow" (default if enabled), "free", "focus"
--- If follow mode is disabled, default to "free"
-local camera_mode = config.CAMERA_FOLLOW_MODE_ENABLED and "follow" or "free"
-local prev_camera_mode = camera_mode  -- Track previous mode for smooth transitions
-local camera_mode_names = {"follow", "free", "focus"}
-
--- Camera settings
--- Note: Picotron runs at 60fps and applies lerp per-frame
+-- Camera config constants (read-only, kept as locals for performance)
+local cam_rot_speed = config.CAMERA_ROTATION_SPEED
 local camera_lerp_speed = config.CAMERA_LERP_SPEED
 local camera_zoom_speed = config.CAMERA_ZOOM_SPEED
-local cam_dist = config.CAMERA_DISTANCE_MIN  -- Will be adjusted based on speed
-local cam_rot_speed = config.CAMERA_ROTATION_SPEED
 local mouse_sensitivity = config.CAMERA_MOUSE_SENSITIVITY
-local last_mouse_x, last_mouse_y = 0, 0
-local mouse_camera_enabled = false  -- Toggle with right mouse button
 
--- World objects
-local buildings = {}
-local building_configs = {}  -- Store building configs for missions
-local cargo_items = {}
+-- Helper function: Restart from death/failed state
+local function do_restart_from_death()
+    local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
+    S.ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
+    S.cam.pitch = 0
+    S.cam.yaw = 0
+    S.ship_death_mode = false
+    S.ship_death_timer = 0
+    S.ship_death_landed = false
+    S.repair_timer = 0
+    S.is_repairing = false
+    Billboard.reset()
+    S.race_victory_mode = false
+    S.race_victory_timer = 0
+    S.mission_complete_mode = false
+    S.mission_complete_timer = 0
+    S.ship.invulnerable = false
+    Fireworks.reset()
+    if Mission.is_active() then
+        Mission.reset()
+        if S.current_mission_num then
+            Missions.start(S.current_mission_num, Mission)
+            HUD.set_mission(S.current_mission_num)
+            AudioManager.start_level_music(S.current_mission_num)
+            if S.current_mission_num == 7 then
+                Aliens.reset()
+                Bullets.reset()
+                Turret.reset()
+                S.wave_start_delay = 2.0
+            end
+        elseif S.current_track_num then
+            Missions.start_race_track(S.current_track_num, Mission)
+            AudioManager.start_level_music(7)
+        end
+    end
+end
 
--- Game mode and mission
-local game_mode = "arcade"  -- "arcade" or "simulation"
-local current_mission_num = nil  -- nil = free flight
-local current_track_num = nil  -- Track number for racing mode
-
--- Combat state (Mission 7)
-local combat_active = false
-local wave_start_delay = 0  -- Delay before starting next wave
-local weapons_enabled = true  -- Toggle with T key
-
--- Race victory state
-local race_victory_mode = false
-local race_victory_cam_angle = 0  -- Camera orbit angle around ship
-local race_victory_ship_pos = {x = 0, y = 0, z = 0}  -- Frozen ship position
-local race_victory_timer = 0  -- Timer for 3-second delay before camera orbit
-
--- Mission complete celebration state (non-race missions)
-local mission_complete_mode = false
-local mission_complete_cam_angle = 0
-local mission_complete_ship_pos = {x = 0, y = 0, z = 0}
-local mission_complete_timer = 0
-
--- Ship death state
-local ship_death_mode = false
-local ship_death_timer = 0
-local ship_death_explosion_count = 0
-local ship_death_pos = {x = 0, y = 0, z = 0}
-local ship_death_landed = false  -- True once ship has hit the ground
-
--- Altitude warning state (for maps with altitude limits)
-local altitude_warning_active = false
-local altitude_warning_timer = 0
-local altitude_limit = nil  -- Set from map config
-
--- Ship repair state
-local repair_timer = 0
-local is_repairing = false
-
--- Debug timer for camera vectors
-local follow_cam_debug_timer = 0
-local cam_orientation = nil  -- Camera orientation quaternion for follow mode
-
--- Fonts
-local thrusterFont = nil
+-- Helper function: Quit to menu from any game state
+local function do_quit_to_menu()
+    S.ship_death_mode = false
+    Mission.reset()
+    Billboard.reset()
+    S.race_victory_mode = false
+    S.race_victory_timer = 0
+    S.mission_complete_mode = false
+    S.mission_complete_timer = 0
+    S.ship.invulnerable = false
+    Fireworks.reset()
+    if S.combat_active then
+        Aliens.reset()
+        Bullets.reset()
+        S.combat_active = false
+    end
+    local scene_manager = require("scene_manager")
+    scene_manager.switch("menu")
+end
 
 function flight_scene.load()
-    print("[FLIGHT] Flight scene loaded - camera mode: " .. camera_mode)
+    print("[FLIGHT] Flight scene loaded - camera mode: " .. S.camera_mode)
     -- Stop menu music when entering flight scene
     AudioManager.stop_music()
 
     -- Renderer already initialized in main.lua
-    -- softwareImage only needed for DDA renderer (GPU renderer handles its own presentation)
+    -- S.softwareImage only needed for DDA renderer (GPU renderer handles its own presentation)
     local imageData = renderer.getImageData()
     if imageData then
-        softwareImage = love.graphics.newImage(imageData)
-        softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
+        S.softwareImage = love.graphics.newImage(imageData)
+        S.softwareImage:setFilter("nearest", "nearest")  -- Pixel-perfect upscaling
     end
 
     -- Initialize directional lighting for Gouraud shading
@@ -142,7 +185,7 @@ function flight_scene.load()
 
     -- Create projection matrix
     local aspect = config.RENDER_WIDTH / config.RENDER_HEIGHT
-    projMatrix = mat4.perspective(config.FOV, aspect, config.NEAR_PLANE, config.FAR_PLANE)
+    S.projMatrix = mat4.perspective(config.FOV, aspect, config.NEAR_PLANE, config.FAR_PLANE)
 
     -- Get game mode and mission from menu to determine which map to load
     local menu = require("menu")
@@ -161,9 +204,9 @@ function flight_scene.load()
     local map_config = Heightmap.get_map_config()
 
     -- Set altitude limit from map config (nil = no limit)
-    altitude_limit = map_config and map_config.altitude_limit or nil
-    altitude_warning_active = false
-    altitude_warning_timer = 0
+    S.altitude_limit = map_config and map_config.altitude_limit or nil
+    S.altitude_warning_active = false
+    S.altitude_warning_timer = 0
 
     if map_config and map_config.has_grass then
         Trees.generate(Heightmap)
@@ -237,21 +280,21 @@ function flight_scene.load()
     -- Get spawn position from first landing pad
     local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
 
-    -- Create ship at landing pad
-    ship = Ship.new({
+    -- Create S.ship at landing pad
+    S.ship = Ship.new({
         spawn_x = spawn_x or 0,
         spawn_y = spawn_y or 10,
         spawn_z = spawn_z or 0,
         spawn_yaw = spawn_yaw or 0
     })
 
-    -- Register ship for damage smoke effects
+    -- Register S.ship for damage smoke effects
     Explosion.register_damage_smoke("player_ship", function()
-        return ship.x, ship.y, ship.z
+        return S.ship.x, S.ship.y, S.ship.z
     end)
 
-    -- Create buildings (matching Picotron exactly)
-    building_configs = {
+    -- Create S.buildings (matching Picotron exactly)
+    S.building_configs = {
         {x = -10, z = 5, width = 1.5, depth = 1.5, height = 8, side_sprite = Constants.SPRITE_BUILDING_SIDE},      -- Tall tower
         {x = -5, z = 4, width = 1.2, depth = 1.2, height = 6, side_sprite = Constants.SPRITE_BUILDING_SIDE_ALT},   -- Medium tower
         {x = 0, z = 5, width = 1.0, depth = 1.0, height = 5, side_sprite = Constants.SPRITE_BUILDING_SIDE},        -- Shorter building
@@ -263,23 +306,23 @@ function flight_scene.load()
         {x = -6, z = 18, width = 1.5, depth = 1.2, height = 6, side_sprite = Constants.SPRITE_BUILDING_SIDE},      -- Medium building
         {x = 2, z = 20, width = 1.1, depth = 1.4, height = 7, side_sprite = Constants.SPRITE_BUILDING_SIDE_ALT},   -- Tall building (Command Tower for mission 3)
     }
-    buildings = Building.create_city(building_configs, Heightmap)
+    S.buildings = Building.create_city(S.building_configs, Heightmap)
 
     -- Set up mission system references
     Mission.LandingPads = LandingPads
-    Missions.buildings = buildings
-    Missions.building_configs = building_configs
+    Missions.buildings = S.buildings
+    Missions.building_configs = S.building_configs
 
     -- Get game mode and mission from menu (menu already required above)
-    game_mode = menu.game_mode or "arcade"
-    current_mission_num = menu.selected_mission  -- nil for free flight
-    current_track_num = menu.selected_track      -- nil if not racing
+    S.game_mode = menu.game_mode or "arcade"
+    S.current_mission_num = menu.selected_mission  -- nil for free flight
+    S.current_track_num = menu.selected_track      -- nil if not racing
 
     -- Create cargo items (only for free flight mode)
-    cargo_items = {}
-    if not current_mission_num and not current_track_num then
+    S.cargo_items = {}
+    if not S.current_mission_num and not S.current_track_num then
         -- Free flight mode - spawn a test cargo
-        table.insert(cargo_items, Cargo.create({
+        table.insert(S.cargo_items, Cargo.create({
             id = 1,
             x = 15,
             z = 10,
@@ -289,25 +332,33 @@ function flight_scene.load()
     end
 
     -- Start mission or race if selected
-    if current_mission_num then
-        Missions.start(current_mission_num, Mission)
-        HUD.set_mission(current_mission_num)
+    if S.current_mission_num then
+        Missions.start(S.current_mission_num, Mission)
+        HUD.set_mission(S.current_mission_num)
         -- Start mission-specific music
-        AudioManager.start_level_music(current_mission_num)
-    elseif current_track_num then
-        Missions.start_race_track(current_track_num, Mission)
+        AudioManager.start_level_music(S.current_mission_num)
+    elseif S.current_track_num then
+        Missions.start_race_track(S.current_track_num, Mission)
         HUD.set_mission(8)  -- Race missions use mission 8+ settings (hide controls/goals by default)
         -- Racing mode defaults to focus camera (looks at next checkpoint)
-        camera_mode = "focus"
+        S.camera_mode = "focus"
         -- Racing mode uses mission 7 music mapping
         AudioManager.start_level_music(7)
     else
-        -- Free flight - no music
+        -- Free flight - clear all mission/race state first
+        Mission.reset()
+        -- Then set up free flight mode with countdown
+        Mission.active = true  -- Mark as active for countdown to work
+        Mission.type = "free_flight"  -- Mark as free flight mode
+        Mission.countdown = {
+            active = true,
+            timer = Mission.COUNTDOWN_DURATION,
+        }
     end
 
     -- Initialize combat systems for Mission 7 (Alien Invasion)
-    combat_active = (current_mission_num == 7)
-    if combat_active then
+    S.combat_active = (S.current_mission_num == 7)
+    if S.combat_active then
         -- Reset combat state
         Aliens.reset()
         Bullets.reset()
@@ -328,18 +379,18 @@ function flight_scene.load()
         end
 
         -- Start first wave with delay
-        wave_start_delay = 2.0
+        S.wave_start_delay = 2.0
     end
 
     -- Create camera (matching Picotron initial state)
-    -- Camera starts at ship position, offset is applied during rendering
-    cam = camera_module.new(spawn_x or 0, (spawn_y or 3), (spawn_z or 0) - 8)
-    cam.pitch = 0  -- rx in Picotron
-    cam.yaw = 0    -- ry in Picotron
-    camera_module.updateVectors(cam)
+    -- Camera starts at S.ship position, offset is applied during rendering
+    S.cam = camera_module.new(spawn_x or 0, (spawn_y or 3), (spawn_z or 0) - 8)
+    S.cam.pitch = 0  -- rx in Picotron
+    S.cam.yaw = 0    -- ry in Picotron
+    camera_module.updateVectors(S.cam)
 
     -- Create smoke particle system
-    smoke_system = ParticleSystem.new({
+    S.smoke_system = ParticleSystem.new({
         size = 0.3,
         max_particles = 20,
         lifetime = 0.5,  -- Short lifetime for quick puffs
@@ -348,7 +399,7 @@ function flight_scene.load()
     })
 
     -- Create speed lines system
-    speed_lines = SpeedLines.new()
+    S.speed_lines = SpeedLines.new()
 
     -- Initialize minimap
     Minimap.set_position(config.RENDER_WIDTH, config.RENDER_HEIGHT)
@@ -374,8 +425,101 @@ end
 function flight_scene.update(dt)
     profile("update")
 
-    -- Skip updates when paused
+    -- Check for gamepad pause toggle (Start button)
+    -- This needs to happen before the paused check so we can unpause too
+    if controls.just_pressed("pause") then
+        HUD.toggle_pause()
+    end
+
+    -- Check for gamepad goals toggle (D-Pad Up)
+    if controls.just_pressed("toggle_goals") then
+        HUD.toggle_goal_box()
+    end
+
+    -- Check for camera cycle (D-Pad Right or F key)
+    if controls.just_pressed("camera_cycle") then
+        if S.camera_mode == "follow" then
+            S.camera_mode = "free"
+            print("[CAMERA] Switched to FREE mode")
+        elseif S.camera_mode == "free" then
+            S.camera_mode = "focus"
+            print("[CAMERA] Switched to FOCUS mode")
+        else
+            -- From focus, go to follow only if enabled, otherwise go to free
+            if config.CAMERA_FOLLOW_MODE_ENABLED then
+                S.camera_mode = "follow"
+                S.follow_cam_debug_timer = 4.5  -- Print debug soon after switching
+                print("[CAMERA] Switched to FOLLOW mode")
+            else
+                S.camera_mode = "free"
+                print("[CAMERA] Switched to FREE mode")
+            end
+        end
+    end
+
+    -- Handle death mode (Y to restart, B to quit) - gamepad support
+    if S.ship_death_mode and S.ship_death_timer > 1.5 then
+        if controls.just_pressed("restart") then
+            do_restart_from_death()
+            profile("update")
+            return
+        end
+        if controls.just_pressed("quit_to_menu") then
+            do_quit_to_menu()
+            profile("update")
+            return
+        end
+    end
+
+    -- Handle race failed (Y to restart, B to quit) - gamepad support
+    if Mission.is_race_failed() then
+        if controls.just_pressed("restart") then
+            flight_scene.load()
+            profile("update")
+            return
+        end
+        if controls.just_pressed("quit_to_menu") then
+            do_quit_to_menu()
+            profile("update")
+            return
+        end
+    end
+
+    -- Handle mission complete (Y to replay, B to quit) - gamepad support
+    if S.mission_complete_mode and S.mission_complete_timer > config.VICTORY_DELAY then
+        if controls.just_pressed("restart") then
+            do_quit_to_menu()  -- Reset state first
+            flight_scene.load()
+            profile("update")
+            return
+        end
+        if controls.just_pressed("quit_to_menu") then
+            do_quit_to_menu()
+            profile("update")
+            return
+        end
+    end
+
+    -- Handle pause menu actions
     if HUD.is_paused() then
+        -- Check for quit to menu (B button on gamepad)
+        if controls.just_pressed("quit_to_menu") then
+            HUD.close_pause()
+            Mission.reset()
+            S.race_victory_mode = false
+            S.race_victory_timer = 0
+            S.mission_complete_mode = false
+            S.mission_complete_timer = 0
+            S.ship.invulnerable = false
+            Fireworks.reset()
+            if S.combat_active then
+                Aliens.reset()
+                Bullets.reset()
+                S.combat_active = false
+            end
+            local scene_manager = require("scene_manager")
+            scene_manager.switch("menu")
+        end
         profile("update")
         return
     end
@@ -383,61 +527,61 @@ function flight_scene.update(dt)
     -- Check for lap completion - trigger small fireworks
     if Mission.lap_just_completed then
         Mission.lap_just_completed = false
-        -- Launch fireworks around the ship
-        Fireworks.burst(ship.x, ship.y, ship.z, 3, 0.8)
+        -- Launch fireworks around the S.ship
+        Fireworks.burst(S.ship.x, S.ship.y, S.ship.z, 3, 0.8)
     end
 
     -- Check for race completion - trigger big celebration fireworks
     if Mission.race_just_completed then
         Mission.race_just_completed = false
         -- Big fireworks celebration!
-        Fireworks.celebrate(ship.x, ship.y, ship.z)
+        Fireworks.celebrate(S.ship.x, S.ship.y, S.ship.z)
     end
 
     -- Check if race just completed - enter victory mode
-    if Mission.race_complete and not race_victory_mode then
-        race_victory_mode = true
-        race_victory_cam_angle = cam.yaw  -- Start from current camera angle
-        race_victory_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
-        race_victory_timer = 0
+    if Mission.race_complete and not S.race_victory_mode then
+        S.race_victory_mode = true
+        S.race_victory_cam_angle = S.cam.yaw  -- Start from current camera angle
+        S.race_victory_ship_pos = {x = S.ship.x, y = S.ship.y, z = S.ship.z}
+        S.race_victory_timer = 0
         -- Ship becomes invulnerable but gameplay continues for 3 seconds
-        ship.invulnerable = true
+        S.ship.invulnerable = true
     end
 
     -- Check if non-race mission just completed - start victory sequence
-    if Mission.is_complete() and not race_victory_mode and not mission_complete_mode and Mission.type ~= "race" then
-        mission_complete_mode = true
-        mission_complete_cam_angle = cam.yaw  -- Start from current camera angle
-        mission_complete_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
-        mission_complete_timer = 0
+    if Mission.is_complete() and not S.race_victory_mode and not S.mission_complete_mode and Mission.type ~= "race" then
+        S.mission_complete_mode = true
+        S.mission_complete_cam_angle = S.cam.yaw  -- Start from current camera angle
+        S.mission_complete_ship_pos = {x = S.ship.x, y = S.ship.y, z = S.ship.z}
+        S.mission_complete_timer = 0
         -- Ship becomes invulnerable but gameplay continues for 3 seconds
-        ship.invulnerable = true
+        S.ship.invulnerable = true
     end
 
-    -- Race victory mode: delay then freeze ship and orbit camera
-    if race_victory_mode then
-        race_victory_timer = race_victory_timer + dt
+    -- Race victory mode: delay then freeze S.ship and orbit camera
+    if S.race_victory_mode then
+        S.race_victory_timer = S.race_victory_timer + dt
 
-        -- Delay: gameplay continues normally, ship just invulnerable
-        if race_victory_timer <= config.VICTORY_DELAY then
-            -- During delay: update saved ship position for when we freeze it
-            race_victory_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
+        -- Delay: gameplay continues normally, S.ship just invulnerable
+        if S.race_victory_timer <= config.VICTORY_DELAY then
+            -- During delay: update saved S.ship position for when we freeze it
+            S.race_victory_ship_pos = {x = S.ship.x, y = S.ship.y, z = S.ship.z}
             -- Normal update continues (no early return)
         else
-            -- AFTER delay: freeze ship and orbit camera
+            -- AFTER delay: freeze S.ship and orbit camera
             -- Disable camera distance offset for clean orbit
-            cam_dist = 0
+            S.cam_dist = 0
 
-            -- Freeze ship at saved victory position
-            ship.x = race_victory_ship_pos.x
-            ship.y = race_victory_ship_pos.y
-            ship.z = race_victory_ship_pos.z
-            ship.vx = 0
-            ship.vy = 0
-            ship.vz = 0
+            -- Freeze S.ship at saved victory position
+            S.ship.x = S.race_victory_ship_pos.x
+            S.ship.y = S.race_victory_ship_pos.y
+            S.ship.z = S.race_victory_ship_pos.z
+            S.ship.vx = 0
+            S.ship.vy = 0
+            S.ship.vz = 0
 
             -- Keep thrusters active for flame animation
-            for _, thruster in ipairs(ship.thrusters) do
+            for _, thruster in ipairs(S.ship.thrusters) do
                 thruster.active = true
             end
 
@@ -449,61 +593,61 @@ function flight_scene.update(dt)
                 local angle = math.random() * math.pi * 2
                 local dist = 8 + math.random() * 8
                 Fireworks.launch(
-                    ship.x + math.sin(angle) * dist,
-                    ship.y - 2,
-                    ship.z + math.cos(angle) * dist,
+                    S.ship.x + math.sin(angle) * dist,
+                    S.ship.y - 2,
+                    S.ship.z + math.cos(angle) * dist,
                     1.2
                 )
             end
 
-            -- Orbit camera around ship
-            race_victory_cam_angle = race_victory_cam_angle + dt * config.VICTORY_ORBIT_SPEED
+            -- Orbit camera around S.ship
+            S.race_victory_cam_angle = S.race_victory_cam_angle + dt * config.VICTORY_ORBIT_SPEED
 
             -- Calculate camera position on orbit
-            cam.pos.x = ship.x + math.sin(race_victory_cam_angle) * config.VICTORY_ORBIT_DISTANCE
-            cam.pos.y = ship.y + config.VICTORY_ORBIT_HEIGHT
-            cam.pos.z = ship.z + math.cos(race_victory_cam_angle) * config.VICTORY_ORBIT_DISTANCE
+            S.cam.pos.x = S.ship.x + math.sin(S.race_victory_cam_angle) * config.VICTORY_ORBIT_DISTANCE
+            S.cam.pos.y = S.ship.y + config.VICTORY_ORBIT_HEIGHT
+            S.cam.pos.z = S.ship.z + math.cos(S.race_victory_cam_angle) * config.VICTORY_ORBIT_DISTANCE
 
-            -- Point camera at ship (use same formula as focus camera)
-            local dx = ship.x - cam.pos.x
-            local dz = ship.z - cam.pos.z
-            local dy = ship.y - cam.pos.y
+            -- Point camera at S.ship (use same formula as focus camera)
+            local dx = S.ship.x - S.cam.pos.x
+            local dz = S.ship.z - S.cam.pos.z
+            local dy = S.ship.y - S.cam.pos.y
             local dist_xz = math.sqrt(dx * dx + dz * dz)
-            cam.yaw = math.atan2(dx, -dz)
-            -- Calculate pitch to look at ship, clamped to ±90 degrees
+            S.cam.yaw = math.atan2(dx, -dz)
+            -- Calculate pitch to look at S.ship, clamped to ±90 degrees
             local max_pitch = math.pi / 2 - 0.01
-            cam.pitch = math.max(-max_pitch, math.min(max_pitch, math.atan2(dy, dist_xz)))
+            S.cam.pitch = math.max(-max_pitch, math.min(max_pitch, math.atan2(dy, dist_xz)))
 
-            camera_module.updateVectors(cam)
+            camera_module.updateVectors(S.cam)
             profile("update")
             return  -- Only return early AFTER the delay
         end
     end
 
-    -- Mission complete mode: delay then freeze ship and orbit camera
-    if mission_complete_mode then
-        mission_complete_timer = mission_complete_timer + dt
+    -- Mission complete mode: delay then freeze S.ship and orbit camera
+    if S.mission_complete_mode then
+        S.mission_complete_timer = S.mission_complete_timer + dt
 
-        -- Delay: gameplay continues normally, ship just invulnerable
-        if mission_complete_timer <= config.VICTORY_DELAY then
-            -- During delay: update saved ship position for when we freeze it
-            mission_complete_ship_pos = {x = ship.x, y = ship.y, z = ship.z}
+        -- Delay: gameplay continues normally, S.ship just invulnerable
+        if S.mission_complete_timer <= config.VICTORY_DELAY then
+            -- During delay: update saved S.ship position for when we freeze it
+            S.mission_complete_ship_pos = {x = S.ship.x, y = S.ship.y, z = S.ship.z}
             -- Normal update continues (no early return)
         else
-            -- AFTER delay: freeze ship and orbit camera
+            -- AFTER delay: freeze S.ship and orbit camera
             -- Disable camera distance offset for clean orbit
-            cam_dist = 0
+            S.cam_dist = 0
 
-            -- Freeze ship at saved victory position
-            ship.x = mission_complete_ship_pos.x
-            ship.y = mission_complete_ship_pos.y
-            ship.z = mission_complete_ship_pos.z
-            ship.vx = 0
-            ship.vy = 0
-            ship.vz = 0
+            -- Freeze S.ship at saved victory position
+            S.ship.x = S.mission_complete_ship_pos.x
+            S.ship.y = S.mission_complete_ship_pos.y
+            S.ship.z = S.mission_complete_ship_pos.z
+            S.ship.vx = 0
+            S.ship.vy = 0
+            S.ship.vz = 0
 
             -- Keep thrusters active for flame animation
-            for _, thruster in ipairs(ship.thrusters) do
+            for _, thruster in ipairs(S.ship.thrusters) do
                 thruster.active = true
             end
 
@@ -515,149 +659,149 @@ function flight_scene.update(dt)
                 local angle = math.random() * math.pi * 2
                 local dist = 8 + math.random() * 8
                 Fireworks.launch(
-                    ship.x + math.sin(angle) * dist,
-                    ship.y - 2,
-                    ship.z + math.cos(angle) * dist,
+                    S.ship.x + math.sin(angle) * dist,
+                    S.ship.y - 2,
+                    S.ship.z + math.cos(angle) * dist,
                     1.2
                 )
             end
 
-            -- Orbit camera around ship
-            mission_complete_cam_angle = mission_complete_cam_angle + dt * config.VICTORY_ORBIT_SPEED
+            -- Orbit camera around S.ship
+            S.mission_complete_cam_angle = S.mission_complete_cam_angle + dt * config.VICTORY_ORBIT_SPEED
 
             -- Calculate camera position on orbit
-            cam.pos.x = ship.x + math.sin(mission_complete_cam_angle) * config.VICTORY_ORBIT_DISTANCE
-            cam.pos.y = ship.y + config.VICTORY_ORBIT_HEIGHT
-            cam.pos.z = ship.z + math.cos(mission_complete_cam_angle) * config.VICTORY_ORBIT_DISTANCE
+            S.cam.pos.x = S.ship.x + math.sin(S.mission_complete_cam_angle) * config.VICTORY_ORBIT_DISTANCE
+            S.cam.pos.y = S.ship.y + config.VICTORY_ORBIT_HEIGHT
+            S.cam.pos.z = S.ship.z + math.cos(S.mission_complete_cam_angle) * config.VICTORY_ORBIT_DISTANCE
 
-            -- Point camera at ship (use same formula as focus camera)
-            local dx = ship.x - cam.pos.x
-            local dz = ship.z - cam.pos.z
-            local dy = ship.y - cam.pos.y
+            -- Point camera at S.ship (use same formula as focus camera)
+            local dx = S.ship.x - S.cam.pos.x
+            local dz = S.ship.z - S.cam.pos.z
+            local dy = S.ship.y - S.cam.pos.y
             local dist_xz = math.sqrt(dx * dx + dz * dz)
-            cam.yaw = math.atan2(dx, -dz)
-            -- Calculate pitch to look at ship, clamped to ±90 degrees
+            S.cam.yaw = math.atan2(dx, -dz)
+            -- Calculate pitch to look at S.ship, clamped to ±90 degrees
             local max_pitch = math.pi / 2 - 0.01
-            cam.pitch = math.max(-max_pitch, math.min(max_pitch, math.atan2(dy, dist_xz)))
+            S.cam.pitch = math.max(-max_pitch, math.min(max_pitch, math.atan2(dy, dist_xz)))
 
-            camera_module.updateVectors(cam)
+            camera_module.updateVectors(S.cam)
             profile("update")
             return  -- Only return early AFTER the delay
         end
     end
 
     -- Check altitude limit (for maps with altitude restrictions like canyon)
-    if altitude_limit and not ship_death_mode then
+    if S.altitude_limit and not S.ship_death_mode then
         local map_config = Heightmap.get_map_config()
         local warning_time = map_config and map_config.altitude_warning_time or 5
 
-        if ship.y > altitude_limit then
+        if S.ship.y > S.altitude_limit then
             -- Over the limit - start or continue countdown
-            if not altitude_warning_active then
-                altitude_warning_active = true
-                altitude_warning_timer = warning_time
+            if not S.altitude_warning_active then
+                S.altitude_warning_active = true
+                S.altitude_warning_timer = warning_time
             else
-                altitude_warning_timer = altitude_warning_timer - dt
-                if altitude_warning_timer <= 0 then
+                S.altitude_warning_timer = S.altitude_warning_timer - dt
+                if S.altitude_warning_timer <= 0 then
                     -- Time's up!
                     if Mission.type == "race" then
-                        -- In race mode, fail the race instead of destroying ship
+                        -- In race mode, fail the race instead of destroying S.ship
                         Mission.fail_race_altitude()
                     else
-                        -- Regular mode - destroy the ship
-                        ship.hull_health = 0
+                        -- Regular mode - destroy the S.ship
+                        S.ship.hull_health = 0
                     end
-                    altitude_warning_active = false
+                    S.altitude_warning_active = false
                 end
             end
         else
             -- Back under limit - cancel warning
-            if altitude_warning_active then
-                altitude_warning_active = false
-                altitude_warning_timer = 0
+            if S.altitude_warning_active then
+                S.altitude_warning_active = false
+                S.altitude_warning_timer = 0
             end
         end
     end
 
-    -- Check for ship death FIRST (before physics update)
-    if ship:is_destroyed() and not ship_death_mode then
-        ship_death_mode = true
-        ship_death_timer = 0
-        ship_death_explosion_count = 0
-        ship_death_pos = {x = ship.x, y = ship.y, z = ship.z}
-        ship_death_landed = false
+    -- Check for S.ship death FIRST (before physics update)
+    if S.ship:is_destroyed() and not S.ship_death_mode then
+        S.ship_death_mode = true
+        S.ship_death_timer = 0
+        S.ship_death_explosion_count = 0
+        S.ship_death_pos = {x = S.ship.x, y = S.ship.y, z = S.ship.z}
+        S.ship_death_landed = false
 
         -- Don't freeze - let it fall! Just stop rotation controls
-        ship.local_vpitch = 0
-        ship.local_vyaw = 0
-        ship.local_vroll = 0
+        S.ship.local_vpitch = 0
+        S.ship.local_vyaw = 0
+        S.ship.local_vroll = 0
 
         -- Spawn the big death explosion
-        Explosion.spawn_death(ship.x, ship.y, ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
+        Explosion.spawn_death(S.ship.x, S.ship.y, S.ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
         AudioManager.play_sfx(3)  -- Explosion sound
         AudioManager.play_death_sound()  -- "You died" voice
         AudioManager.stop_thruster()  -- Stop thruster sound
     end
 
-    -- Handle death sequence - ship falls with gravity until hitting ground
-    if ship_death_mode then
-        ship_death_timer = ship_death_timer + dt
+    -- Handle death sequence - S.ship falls with gravity until hitting ground
+    if S.ship_death_mode then
+        S.ship_death_timer = S.ship_death_timer + dt
 
         -- Stop rotation controls but allow falling
-        ship.local_vpitch = 0
-        ship.local_vyaw = 0
-        ship.local_vroll = 0
+        S.ship.local_vpitch = 0
+        S.ship.local_vyaw = 0
+        S.ship.local_vroll = 0
 
-        if not ship_death_landed then
+        if not S.ship_death_landed then
             -- Apply gravity
             local gravity = config.GRAVITY or 0.15
-            ship.vy = ship.vy - gravity * dt * 60
+            S.ship.vy = S.ship.vy - gravity * dt * 60
 
             -- Apply some air resistance to horizontal movement
-            ship.vx = ship.vx * 0.99
-            ship.vz = ship.vz * 0.99
+            S.ship.vx = S.ship.vx * 0.99
+            S.ship.vz = S.ship.vz * 0.99
 
             -- Update position
-            ship.x = ship.x + ship.vx * dt * 60
-            ship.y = ship.y + ship.vy * dt * 60
-            ship.z = ship.z + ship.vz * dt * 60
+            S.ship.x = S.ship.x + S.ship.vx * dt * 60
+            S.ship.y = S.ship.y + S.ship.vy * dt * 60
+            S.ship.z = S.ship.z + S.ship.vz * dt * 60
 
             -- Check for ground collision
-            local ground_height = Heightmap.get_height(ship.x, ship.z)
+            local ground_height = Heightmap.get_height(S.ship.x, S.ship.z)
             local ship_ground_offset = config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y
 
-            if ship.y < ground_height + ship_ground_offset then
+            if S.ship.y < ground_height + ship_ground_offset then
                 -- Hit the ground - stop falling
-                ship.y = ground_height + ship_ground_offset
-                ship.vx = 0
-                ship.vy = 0
-                ship.vz = 0
-                ship_death_landed = true
+                S.ship.y = ground_height + ship_ground_offset
+                S.ship.vx = 0
+                S.ship.vy = 0
+                S.ship.vz = 0
+                S.ship_death_landed = true
 
                 -- Spawn crash explosion on impact
-                Explosion.spawn_impact(ship.x, ship.y, ship.z, 1.0)
+                Explosion.spawn_impact(S.ship.x, S.ship.y, S.ship.z, 1.0)
                 AudioManager.play_sfx(3)  -- Explosion sound
             end
         end
 
         -- Spawn additional explosions during death sequence (while falling)
-        if ship_death_timer < 2.0 and math.random() < dt * 3 then
+        if S.ship_death_timer < 2.0 and math.random() < dt * 3 then
             local offset_x = (math.random() - 0.5) * 3
             local offset_y = (math.random() - 0.5) * 2
             local offset_z = (math.random() - 0.5) * 3
             Explosion.spawn_impact(
-                ship.x + offset_x,
-                ship.y + offset_y,
-                ship.z + offset_z,
+                S.ship.x + offset_x,
+                S.ship.y + offset_y,
+                S.ship.z + offset_z,
                 0.5 + math.random() * 0.5
             )
         end
 
         -- Update billboards and particles even during death
         Billboard.update(dt)
-        smoke_system:update(dt)
+        S.smoke_system:update(dt)
 
-        -- Update damage smoke (shows ship is destroyed)
+        -- Update damage smoke (shows S.ship is destroyed)
         Explosion.update_damage_smoke("player_ship", 0, dt)
 
         -- After death sequence, show death screen (handled in draw)
@@ -666,21 +810,21 @@ function flight_scene.update(dt)
         return
     end
 
-    -- Disable ship controls during race countdown or when race is failed
-    ship.controls_disabled = Mission.is_race_countdown_active() or Mission.is_race_failed()
+    -- Disable S.ship controls during race countdown or when race is failed
+    S.ship.controls_disabled = Mission.is_countdown_active() or Mission.is_race_failed()
 
-    -- Update ship physics (only when alive)
-    ship:update(dt)
+    -- Update S.ship physics (only when alive)
+    S.ship:update(dt)
 
     -- Update damage smoke based on hull percentage
-    local hull_percent = ship:get_hull_percent()
+    local hull_percent = S.ship:get_hull_percent()
     Explosion.update_damage_smoke("player_ship", hull_percent, dt)
 
     -- Ground damping constants
     local GROUND_VELOCITY_DAMPING = 0.9  -- Extra damping when grounded
 
     -- Track highest ground level (terrain or landing pad)
-    local ground_height = Heightmap.get_height(ship.x, ship.z)
+    local ground_height = Heightmap.get_height(S.ship.x, S.ship.z)
     local is_grounded = false
 
     -- Check landing pad surfaces first (they can be higher than terrain)
@@ -688,18 +832,18 @@ function flight_scene.update(dt)
         if pad.collision then
             local bounds = pad.collision:get_bounds()
 
-            if Collision.point_in_box(ship.x, ship.z, pad.x, pad.z, bounds.half_width, bounds.half_depth) then
+            if Collision.point_in_box(S.ship.x, S.ship.z, pad.x, pad.z, bounds.half_width, bounds.half_depth) then
                 -- Ship is horizontally over landing pad
-                -- Check if ship is within the vertical bounds (side collision)
-                if ship.y > bounds.bottom and ship.y < bounds.top then
+                -- Check if S.ship is within the vertical bounds (side collision)
+                if S.ship.y > bounds.bottom and S.ship.y < bounds.top then
                     -- Side collision - push out
-                    ship.x, ship.z = Collision.push_out_of_box(
-                        ship.x, ship.z,
+                    S.ship.x, S.ship.z = Collision.push_out_of_box(
+                        S.ship.x, S.ship.z,
                         pad.x, pad.z,
                         bounds.half_width, bounds.half_depth
                     )
-                    ship.vx = ship.vx * 0.5
-                    ship.vz = ship.vz * 0.5
+                    S.ship.vx = S.ship.vx * 0.5
+                    S.ship.vz = S.ship.vz * 0.5
                 else
                     -- Use pad top as ground height if higher
                     if bounds.top > ground_height then
@@ -714,49 +858,49 @@ function flight_scene.update(dt)
     local ship_half_width = config.VTOL_COLLISION_WIDTH
     local ship_half_depth = config.VTOL_COLLISION_DEPTH
 
-    for _, building in ipairs(buildings) do
+    for _, building in ipairs(S.buildings) do
         local half_width = building.width / 2
         local half_depth = building.depth / 2
         local building_height = building.height
         local building_top = building.y + building_height
         local building_bottom = building.y
 
-        -- Check if ship's bounding box overlaps with building
+        -- Check if S.ship's bounding box overlaps with building
         local ship_half_height = config.VTOL_COLLISION_HEIGHT
-        local ship_bottom = ship.y - ship_half_height + config.VTOL_COLLISION_OFFSET_Y
-        local ship_top = ship.y + ship_half_height + config.VTOL_COLLISION_OFFSET_Y
-        if Collision.box_overlap(ship.x, ship.z, ship_half_width, ship_half_depth,
+        local ship_bottom = S.ship.y - ship_half_height + config.VTOL_COLLISION_OFFSET_Y
+        local ship_top = S.ship.y + ship_half_height + config.VTOL_COLLISION_OFFSET_Y
+        if Collision.box_overlap(S.ship.x, S.ship.z, ship_half_width, ship_half_depth,
                                   building.x, building.z, half_width, half_depth) then
             -- Ship is horizontally inside building bounds
-            -- Check if ship center is above building top (landing from above)
+            -- Check if S.ship center is above building top (landing from above)
             -- Use small tolerance to prevent edge-case side collisions when landing
             local roof_tolerance = 0.1
-            if ship.y > building_top - roof_tolerance then
+            if S.ship.y > building_top - roof_tolerance then
                 -- Ship is above building - rooftop is a landing surface
                 if building_top > ground_height then
                     ground_height = building_top
                 end
             elseif ship_bottom < building_top and ship_top > building_bottom then
-                -- Side collision: ship is inside building volume - push out
-                local old_x, old_z = ship.x, ship.z
-                ship.x, ship.z = Collision.push_out_of_box(
-                    ship.x, ship.z,
+                -- Side collision: S.ship is inside building volume - push out
+                local old_x, old_z = S.ship.x, S.ship.z
+                S.ship.x, S.ship.z = Collision.push_out_of_box(
+                    S.ship.x, S.ship.z,
                     building.x, building.z,
                     half_width, half_depth
                 )
 
                 -- Calculate bounce direction (away from building)
-                local push_dx = ship.x - old_x
-                local push_dz = ship.z - old_z
+                local push_dx = S.ship.x - old_x
+                local push_dz = S.ship.z - old_z
                 local push_len = math.sqrt(push_dx * push_dx + push_dz * push_dz)
 
                 -- Damage based on collision speed (configurable multiplier)
-                local collision_speed = math.sqrt(ship.vx*ship.vx + ship.vy*ship.vy + ship.vz*ship.vz)
+                local collision_speed = math.sqrt(S.ship.vx*S.ship.vx + S.ship.vy*S.ship.vy + S.ship.vz*S.ship.vz)
                 if collision_speed > 0.05 then
                     local damage = collision_speed * (config.SHIP_COLLISION_DAMAGE_MULTIPLIER or 20)
-                    ship:take_damage(damage)
+                    S.ship:take_damage(damage)
                     -- Spawn impact explosion
-                    Explosion.spawn_impact(ship.x, ship.y, ship.z, config.EXPLOSION_IMPACT_SCALE or 0.8)
+                    Explosion.spawn_impact(S.ship.x, S.ship.y, S.ship.z, config.EXPLOSION_IMPACT_SCALE or 0.8)
                     AudioManager.play_sfx(8)  -- Collision sound
                 end
 
@@ -767,12 +911,12 @@ function flight_scene.update(dt)
                 if push_len > 0.001 then
                     -- Normalize push direction and apply bounce
                     local nx, nz = push_dx / push_len, push_dz / push_len
-                    ship.vx = -ship.vx * bounce_factor + nx * push_force
-                    ship.vz = -ship.vz * bounce_factor + nz * push_force
+                    S.ship.vx = -S.ship.vx * bounce_factor + nx * push_force
+                    S.ship.vz = -S.ship.vz * bounce_factor + nz * push_force
                 else
                     -- Fallback: just reverse velocity
-                    ship.vx = -ship.vx * bounce_factor
-                    ship.vz = -ship.vz * bounce_factor
+                    S.ship.vx = -S.ship.vx * bounce_factor
+                    S.ship.vz = -S.ship.vz * bounce_factor
                 end
             end
         end
@@ -782,25 +926,25 @@ function flight_scene.update(dt)
     local ship_ground_offset = config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y
     local landing_height = ground_height + ship_ground_offset
 
-    if ship.y < landing_height then
+    if S.ship.y < landing_height then
         -- Check for water collision (instant death) - skip if invulnerable
-        if Heightmap.is_water(ship.x, ship.z) and not ship.invulnerable then
+        if Heightmap.is_water(S.ship.x, S.ship.z) and not S.ship.invulnerable then
             -- Water collision = instant death explosion
-            Explosion.spawn_death(ship.x, ship.y, ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
+            Explosion.spawn_death(S.ship.x, S.ship.y, S.ship.z, config.EXPLOSION_DEATH_SCALE or 2.5)
             AudioManager.play_sfx(3)  -- Explosion sound
-            ship.health = 0  -- Kill the ship
-        elseif not Heightmap.is_water(ship.x, ship.z) then
-            local vertical_speed = math.abs(ship.vy)
-            local horizontal_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
+            S.ship.health = 0  -- Kill the S.ship
+        elseif not Heightmap.is_water(S.ship.x, S.ship.z) then
+            local vertical_speed = math.abs(S.ship.vy)
+            local horizontal_speed = math.sqrt(S.ship.vx * S.ship.vx + S.ship.vz * S.ship.vz)
 
             -- Calculate orientation damage multiplier
             -- Ship's local up vector (0, 1, 0) transformed to world space
-            -- If ship is upright, world_up_y will be close to 1
-            -- If ship is upside down, world_up_y will be close to -1
-            -- If ship is on its side, world_up_y will be close to 0
-            local _, world_up_y, _ = quat.rotateVector(ship.orientation, 0, 1, 0)
+            -- If S.ship is upright, world_up_y will be close to 1
+            -- If S.ship is upside down, world_up_y will be close to -1
+            -- If S.ship is on its side, world_up_y will be close to 0
+            local _, world_up_y, _ = quat.rotateVector(S.ship.orientation, 0, 1, 0)
 
-            -- Orientation multiplier based on ship orientation
+            -- Orientation multiplier based on S.ship orientation
             -- world_up_y = 1 (upright) -> 1x damage (bottom armor)
             -- world_up_y = 0 (on side) -> side crash multiplier
             -- world_up_y < 0 (upside down) -> top crash multiplier
@@ -828,11 +972,11 @@ function flight_scene.update(dt)
                 local base_damage = vertical_speed * (config.SHIP_COLLISION_DAMAGE_MULTIPLIER or 20)
                 local speed_factor = 1 + (vertical_speed * 10)
                 local damage = base_damage * speed_factor * orientation_multiplier
-                ship:take_damage(damage)
+                S.ship:take_damage(damage)
                 -- Spawn impact explosion for hard landings
                 if vertical_speed > explosion_threshold then
                     local explosion_scale = (config.EXPLOSION_IMPACT_SCALE or 0.8) * math.min(orientation_multiplier, 3)
-                    Explosion.spawn_impact(ship.x, ship.y, ship.z, explosion_scale)
+                    Explosion.spawn_impact(S.ship.x, S.ship.y, S.ship.z, explosion_scale)
                     AudioManager.play_sfx(8)  -- Collision sound
                 end
             end
@@ -842,107 +986,107 @@ function flight_scene.update(dt)
             if horizontal_speed > scrape_threshold then
                 local scrape_damage = horizontal_speed * (config.SHIP_COLLISION_DAMAGE_MULTIPLIER or 20) * 0.5
                 local speed_factor = 1 + (horizontal_speed * 5)
-                ship:take_damage(scrape_damage * speed_factor * orientation_multiplier)
+                S.ship:take_damage(scrape_damage * speed_factor * orientation_multiplier)
                 -- Spawn sparks/small explosion for fast scraping
                 if horizontal_speed > scrape_threshold * 2 then
-                    Explosion.spawn_impact(ship.x, ship.y, ship.z, 0.4)
+                    Explosion.spawn_impact(S.ship.x, S.ship.y, S.ship.z, 0.4)
                     AudioManager.play_sfx(8)  -- Collision sound
                 end
             end
         end
 
         -- Snap to ground and zero vertical velocity
-        ship.y = landing_height
-        ship.vy = 0
+        S.ship.y = landing_height
+        S.ship.vy = 0
         is_grounded = true
 
         -- Extra horizontal damping when grounded to prevent sliding
-        ship.vx = ship.vx * GROUND_VELOCITY_DAMPING
-        ship.vz = ship.vz * GROUND_VELOCITY_DAMPING
+        S.ship.vx = S.ship.vx * GROUND_VELOCITY_DAMPING
+        S.ship.vz = S.ship.vz * GROUND_VELOCITY_DAMPING
     end
 
     -- Update cargo (pass quaternion orientation for gimbal-lock-free rotation)
-    -- Only update free-flight cargo if no mission is active
-    if not Mission.is_active() then
-        for _, cargo in ipairs(cargo_items) do
-            Cargo.update(cargo, dt, ship.x, ship.y, ship.z, ship.orientation)
+    -- Only update free-flight cargo if in free flight mode
+    if Mission.type == "free_flight" then
+        for _, cargo in ipairs(S.cargo_items) do
+            Cargo.update(cargo, dt, S.ship.x, S.ship.y, S.ship.z, S.ship.orientation)
         end
     end
 
-    -- Check for landing (returns the pad the ship is currently on, or nil)
-    local current_landing_pad = LandingPads.check_landing(ship.x, ship.y, ship.z, ship.vy)
+    -- Check for landing (returns the pad the S.ship is currently on, or nil)
+    local current_landing_pad = LandingPads.check_landing(S.ship.x, S.ship.y, S.ship.z, S.ship.vy)
 
     -- Update mission system
     if Mission.is_active() then
-        Mission.update(dt, ship, current_landing_pad)
+        Mission.update(dt, S.ship, current_landing_pad)
     end
 
     -- Free flight cargo delivery
-    if not Mission.is_active() and current_landing_pad and cargo_items[1] and Cargo.is_attached(cargo_items[1]) then
-        Cargo.deliver(cargo_items[1])
+    if Mission.type == "free_flight" and current_landing_pad and S.cargo_items[1] and Cargo.is_attached(S.cargo_items[1]) then
+        Cargo.deliver(S.cargo_items[1])
         print("Cargo delivered to " .. current_landing_pad.name .. "!")
     end
 
     -- Landing pad repair system
-    is_repairing = false
+    S.is_repairing = false
     if current_landing_pad and is_grounded then
         -- Calculate total velocity
-        local total_velocity = math.sqrt(ship.vx*ship.vx + ship.vy*ship.vy + ship.vz*ship.vz)
+        local total_velocity = math.sqrt(S.ship.vx*S.ship.vx + S.ship.vy*S.ship.vy + S.ship.vz*S.ship.vz)
         local velocity_threshold = config.SHIP_REPAIR_VELOCITY_THRESHOLD or 0.05
 
         if total_velocity < velocity_threshold then
             -- Ship is stationary on landing pad
-            repair_timer = repair_timer + dt
+            S.repair_timer = S.repair_timer + dt
             local repair_delay = config.SHIP_REPAIR_DELAY or 1.0
 
             -- Start repairing after delay
-            if repair_timer >= repair_delay and ship.health < ship.max_health then
-                is_repairing = true
+            if S.repair_timer >= repair_delay and S.ship.health < S.ship.max_health then
+                S.is_repairing = true
                 local repair_rate = config.SHIP_REPAIR_RATE or 20
                 local repair_amount = repair_rate * dt
-                ship.health = math.min(ship.health + repair_amount, ship.max_health)
+                S.ship.health = math.min(S.ship.health + repair_amount, S.ship.max_health)
             end
         else
             -- Ship is moving, reset repair timer
-            repair_timer = 0
+            S.repair_timer = 0
         end
     else
         -- Not on landing pad, reset repair timer
-        repair_timer = 0
+        S.repair_timer = 0
     end
 
     -- Spawn smoke particles when thrusters are active
     local any_thruster_active = false
-    for _, thruster in ipairs(ship.thrusters) do
+    for _, thruster in ipairs(S.ship.thrusters) do
         if thruster.active then
             any_thruster_active = true
-            smoke_system:spawn(
-                ship.x + thruster.x,
-                ship.y - 0.5,
-                ship.z + thruster.z,
-                ship.vx * 0.5,
+            S.smoke_system:spawn(
+                S.ship.x + thruster.x,
+                S.ship.y - 0.5,
+                S.ship.z + thruster.z,
+                S.ship.vx * 0.5,
                 -0.02,
-                ship.vz * 0.5
+                S.ship.vz * 0.5
             )
         end
     end
 
     -- Manage thruster sound
-    if any_thruster_active and not ship_death_mode then
+    if any_thruster_active and not S.ship_death_mode then
         AudioManager.start_thruster()
     else
         AudioManager.stop_thruster()
     end
 
     -- Update particles
-    smoke_system:update(dt)
+    S.smoke_system:update(dt)
 
-    -- Update speed lines (pass ship position and velocity)
-    speed_lines:update(dt, ship.x, ship.y, ship.z, ship.vx, ship.vy, ship.vz)
+    -- Update speed lines (pass S.ship position and velocity)
+    S.speed_lines:update(dt, S.ship.x, S.ship.y, S.ship.z, S.ship.vx, S.ship.vy, S.ship.vz)
 
     -- Update weather system (rain particles, wind changes, lightning)
-    Weather.update(dt, cam.pos.x, cam.pos.y, cam.pos.z, ship.vx, ship.vy, ship.vz)
-    Weather.apply_wind(ship, ship.y, is_grounded)
+    Weather.update(dt, S.cam.pos.x, S.cam.pos.y, S.cam.pos.z, S.ship.vx, S.ship.vy, S.ship.vz)
+    Weather.apply_wind(S.ship, S.ship.y, is_grounded)
 
     -- Update fireworks (for lap completion celebrations)
     Fireworks.update(dt)
@@ -951,13 +1095,13 @@ function flight_scene.update(dt)
     Billboard.update(dt)
 
     -- Update combat systems (Mission 6)
-    if combat_active then
+    if S.combat_active then
         -- Wave start delay
-        if wave_start_delay > 0 then
-            wave_start_delay = wave_start_delay - dt
-            if wave_start_delay <= 0 then
+        if S.wave_start_delay > 0 then
+            S.wave_start_delay = S.wave_start_delay - dt
+            if S.wave_start_delay <= 0 then
                 -- Start next wave
-                local has_more = Aliens.start_next_wave(ship, LandingPads)
+                local has_more = Aliens.start_next_wave(S.ship, LandingPads)
                 if has_more then
                     print("Wave " .. Aliens.get_wave() .. " starting!")
                 end
@@ -965,8 +1109,8 @@ function flight_scene.update(dt)
         end
 
         -- Check if wave complete and start next (only if not already waiting)
-        if Aliens.wave_complete and not Aliens.all_waves_complete() and wave_start_delay <= 0 then
-            wave_start_delay = 3.0  -- Delay between waves
+        if Aliens.wave_complete and not Aliens.all_waves_complete() and S.wave_start_delay <= 0 then
+            S.wave_start_delay = 3.0  -- Delay between waves
             Aliens.wave_complete = false
         end
 
@@ -976,29 +1120,29 @@ function flight_scene.update(dt)
         end
 
         -- Update aliens (pass landing pad status for safe zones)
-        local player_on_pad = LandingPads.check_landing(ship.x, ship.y, ship.z, ship.vy) ~= nil
+        local player_on_pad = LandingPads.check_landing(S.ship.x, S.ship.y, S.ship.z, S.ship.vy) ~= nil
         -- Pass world objects for collision detection
         local world_objects = {
             heightmap = Heightmap,
             trees = Trees,
-            buildings = buildings
+            buildings = S.buildings
         }
-        Aliens.update(dt, ship, player_on_pad, world_objects)
+        Aliens.update(dt, S.ship, player_on_pad, world_objects)
 
         -- Validate current target (auto-select closest if destroyed)
         local enemies = Aliens.get_all()
-        local validated_target = HUD.validate_target(enemies, ship.x, ship.z)
+        local validated_target = HUD.validate_target(enemies, S.ship.x, S.ship.z)
         -- Sync turret target with HUD target
         Turret.target = validated_target
 
         -- Update turret (auto-aims at enemies)
-        Turret.update(dt, ship, enemies)
+        Turret.update(dt, S.ship, enemies)
 
         -- Auto-fire turret when target acquired (and weapons enabled)
-        if weapons_enabled and Turret.can_fire() and Turret.target then
-            local dir_x, dir_y, dir_z = Turret.get_fire_direction(ship)
+        if S.weapons_enabled and Turret.can_fire() and Turret.target then
+            local dir_x, dir_y, dir_z = Turret.get_fire_direction(S.ship)
             if dir_x then
-                local turret_x, turret_y, turret_z = Turret.get_position(ship)
+                local turret_x, turret_y, turret_z = Turret.get_position(S.ship)
                 Bullets.spawn_player_bullet(turret_x, turret_y, turret_z, dir_x, dir_y, dir_z)
             end
         end
@@ -1028,117 +1172,124 @@ function flight_scene.update(dt)
             end
         end
 
-        -- Check enemy bullet hits on player (using ship's collision box)
+        -- Check enemy bullet hits on player (using S.ship's collision box)
         local ship_bounds = {
-            left = ship.x - config.VTOL_COLLISION_WIDTH,
-            right = ship.x + config.VTOL_COLLISION_WIDTH,
-            bottom = ship.y - config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y,
-            top = ship.y + config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y,
-            back = ship.z - config.VTOL_COLLISION_DEPTH,
-            front = ship.z + config.VTOL_COLLISION_DEPTH,
+            left = S.ship.x - config.VTOL_COLLISION_WIDTH,
+            right = S.ship.x + config.VTOL_COLLISION_WIDTH,
+            bottom = S.ship.y - config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y,
+            top = S.ship.y + config.VTOL_COLLISION_HEIGHT + config.VTOL_COLLISION_OFFSET_Y,
+            back = S.ship.z - config.VTOL_COLLISION_DEPTH,
+            front = S.ship.z + config.VTOL_COLLISION_DEPTH,
         }
         local player_hits = Bullets.check_collision("player", ship_bounds)
         for _, hit in ipairs(player_hits) do
-            ship:take_damage(10)  -- Damage per enemy bullet
+            S.ship:take_damage(10)  -- Damage per enemy bullet
             AudioManager.play_sfx(8)  -- Collision/damage sound
         end
     end
 
-    -- Auto-level
-    if controls.is_down("auto_level") then
-        ship:auto_level(dt)
+    -- Auto-level (analog - LT pressure controls strength)
+    local auto_level_power = controls.get_axis("auto_level")
+    if auto_level_power > 0 then
+        S.ship:auto_level(dt, auto_level_power)
     end
 
     -- Camera rotation (depends on camera mode)
     local timeScale = dt * 60  -- Scale for 60 FPS equivalence
 
-    if camera_mode == "free" then
+    if S.camera_mode == "free" then
         -- FREE MODE: Arrow keys/right stick and mouse control camera rotation
-        if controls.is_down("camera_left") then
-            cam.yaw = cam.yaw - cam_rot_speed * timeScale
+        -- Use analog values for proportional camera speed
+        local cam_left = controls.get_axis("camera_left")
+        local cam_right = controls.get_axis("camera_right")
+        local cam_up = controls.get_axis("camera_up")
+        local cam_down = controls.get_axis("camera_down")
+
+        if cam_left > 0 then
+            S.cam.yaw = S.cam.yaw - cam_rot_speed * cam_left * timeScale
         end
-        if controls.is_down("camera_right") then
-            cam.yaw = cam.yaw + cam_rot_speed * timeScale
+        if cam_right > 0 then
+            S.cam.yaw = S.cam.yaw + cam_rot_speed * cam_right * timeScale
         end
-        if controls.is_down("camera_up") then
-            cam.pitch = cam.pitch - cam_rot_speed * 0.6 * timeScale
+        if cam_up > 0 then
+            S.cam.pitch = S.cam.pitch - cam_rot_speed * 0.6 * cam_up * timeScale
         end
-        if controls.is_down("camera_down") then
-            cam.pitch = cam.pitch + cam_rot_speed * 0.6 * timeScale
+        if cam_down > 0 then
+            S.cam.pitch = S.cam.pitch + cam_rot_speed * 0.6 * cam_down * timeScale
         end
 
         -- Mouse camera control
         local mouse_x, mouse_y = love.mouse.getPosition()
         if love.mouse.isDown(1) or love.mouse.isDown(2) then
-            if mouse_camera_enabled then
-                local dx = mouse_x - last_mouse_x
-                local dy = mouse_y - last_mouse_y
-                cam.yaw = cam.yaw + dx * mouse_sensitivity
-                cam.pitch = cam.pitch + dy * mouse_sensitivity
-                cam.pitch = math.max(-1.5, math.min(1.5, cam.pitch))
+            if S.mouse_camera_enabled then
+                local dx = mouse_x - S.last_mouse_x
+                local dy = mouse_y - S.last_mouse_y
+                S.cam.yaw = S.cam.yaw + dx * mouse_sensitivity
+                S.cam.pitch = S.cam.pitch + dy * mouse_sensitivity
+                S.cam.pitch = math.max(-1.5, math.min(1.5, S.cam.pitch))
             end
-            mouse_camera_enabled = true
+            S.mouse_camera_enabled = true
         else
-            mouse_camera_enabled = false
+            S.mouse_camera_enabled = false
         end
-        last_mouse_x, last_mouse_y = mouse_x, mouse_y
+        S.last_mouse_x, S.last_mouse_y = mouse_x, mouse_y
 
         -- Debug print every 5 seconds (if enabled)
         if config.CAMERA_DEBUG then
-            follow_cam_debug_timer = follow_cam_debug_timer + dt
-            if follow_cam_debug_timer >= 5 then
-                follow_cam_debug_timer = 0
+            S.follow_cam_debug_timer = S.follow_cam_debug_timer + dt
+            if S.follow_cam_debug_timer >= 5 then
+                S.follow_cam_debug_timer = 0
                 -- Use camera module's forward vector (updated by updateVectors)
-                camera_module.updateVectors(cam)
-                local horiz_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
+                camera_module.updateVectors(S.cam)
+                local horiz_speed = math.sqrt(S.ship.vx * S.ship.vx + S.ship.vz * S.ship.vz)
                 print("=== FREE CAMERA DEBUG ===")
-                print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
-                print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
-                print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam.forward.x, cam.forward.y, cam.forward.z))
+                print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", S.ship.x, S.ship.y, S.ship.z))
+                print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", S.cam.pos.x, S.cam.pos.y, S.cam.pos.z))
+                print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", S.cam.forward.x, S.cam.forward.y, S.cam.forward.z))
                 print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
-                    ship.vx, ship.vy, ship.vz, horiz_speed))
-                print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+                    S.ship.vx, S.ship.vy, S.ship.vz, horiz_speed))
+                print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(S.cam.yaw), math.deg(S.cam.pitch)))
             end
         end
 
-    elseif camera_mode == "follow" then
-        -- FOLLOW MODE: Camera follows behind ship, looking toward it
+    elseif S.camera_mode == "follow" then
+        -- FOLLOW MODE: Camera follows behind S.ship, looking toward it
         -- Per user diagram:
-        -- - Camera positioned BEHIND ship (opposite of velocity direction)
-        -- - Camera LOOKS TOWARD ship (in velocity direction from camera's perspective)
+        -- - Camera positioned BEHIND S.ship (opposite of velocity direction)
+        -- - Camera LOOKS TOWARD S.ship (in velocity direction from camera's perspective)
         --
         -- This section ONLY handles rotation (quaternion).
         -- Position is handled in the later position update section.
 
         -- Initialize quaternion from current yaw/pitch (on mode switch or first time)
-        if not cam_orientation or prev_camera_mode ~= "follow" then
+        if not S.cam_orientation or S.prev_camera_mode ~= "follow" then
             -- Build quaternion from current camera yaw and pitch for smooth transition
-            local yaw_quat = quat.fromAxisAngle(0, 1, 0, cam.yaw)
-            local pitch_quat = quat.fromAxisAngle(1, 0, 0, cam.pitch)
-            cam_orientation = quat.multiply(yaw_quat, pitch_quat)
+            local yaw_quat = quat.fromAxisAngle(0, 1, 0, S.cam.yaw)
+            local pitch_quat = quat.fromAxisAngle(1, 0, 0, S.cam.pitch)
+            S.cam_orientation = quat.multiply(yaw_quat, pitch_quat)
         end
 
         -- Ship horizontal velocity (for yaw direction)
-        local horizontal_speed = math.sqrt(ship.vx * ship.vx + ship.vz * ship.vz)
+        local horizontal_speed = math.sqrt(S.ship.vx * S.ship.vx + S.ship.vz * S.ship.vz)
 
         if horizontal_speed > 0.01 then
             -- Normalized horizontal velocity direction
-            local vel_x = ship.vx / horizontal_speed
-            local vel_z = ship.vz / horizontal_speed
+            local vel_x = S.ship.vx / horizontal_speed
+            local vel_z = S.ship.vz / horizontal_speed
 
             -- Target yaw: camera looks OPPOSITE to velocity direction
-            -- This way, with cam_dist offset, the ship appears in front of the camera
+            -- This way, with S.cam_dist offset, the S.ship appears in front of the camera
             local target_yaw = math.atan2(vel_x, -vel_z)
 
             -- Target pitch: subtle tilt based on vertical movement, but limited
             -- Use full 3D speed for pitch calculation
-            local ship_speed = math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy + ship.vz * ship.vz)
+            local ship_speed = math.sqrt(S.ship.vx * S.ship.vx + S.ship.vy * S.ship.vy + S.ship.vz * S.ship.vz)
             local target_pitch = 0
             if ship_speed > 0.01 then
                 -- Pitch based on ratio of vertical to horizontal speed
-                -- Positive vy (going up) -> positive pitch (look down at ship)
-                -- Negative vy (going down) -> negative pitch (look up at ship)
-                local pitch_ratio = ship.vy / ship_speed
+                -- Positive vy (going up) -> positive pitch (look down at S.ship)
+                -- Negative vy (going down) -> negative pitch (look up at S.ship)
+                local pitch_ratio = S.ship.vy / ship_speed
                 target_pitch = pitch_ratio * 0.4  -- Limit to ~23 degrees max
                 target_pitch = math.max(-0.4, math.min(0.4, target_pitch))
             end
@@ -1151,37 +1302,37 @@ function flight_scene.update(dt)
 
             -- Slerp toward target
             local slerp_speed = 0.08 * timeScale
-            cam_orientation = quat.slerp(cam_orientation, target_quat, slerp_speed)
-            cam_orientation = quat.normalize(cam_orientation)
+            S.cam_orientation = quat.slerp(S.cam_orientation, target_quat, slerp_speed)
+            S.cam_orientation = quat.normalize(S.cam_orientation)
         end
 
         -- Get forward direction from quaternion
-        local cam_fwd_x, cam_fwd_y, cam_fwd_z = quat.rotateVector(cam_orientation, 0, 0, 1)
+        local cam_fwd_x, cam_fwd_y, cam_fwd_z = quat.rotateVector(S.cam_orientation, 0, 0, 1)
 
         -- Extract yaw/pitch from forward vector for view matrix
         -- Camera convention: forward = (sin(yaw)*cos(pitch), -sin(pitch), cos(yaw)*cos(pitch))
-        cam.yaw = math.atan2(cam_fwd_x, cam_fwd_z)
-        cam.pitch = math.asin(math.max(-1, math.min(1, -cam_fwd_y)))
+        S.cam.yaw = math.atan2(cam_fwd_x, cam_fwd_z)
+        S.cam.pitch = math.asin(math.max(-1, math.min(1, -cam_fwd_y)))
 
         -- Debug print every 5 seconds (if enabled)
         if config.CAMERA_DEBUG then
-            follow_cam_debug_timer = follow_cam_debug_timer + dt
-            if follow_cam_debug_timer >= 5 then
-                follow_cam_debug_timer = 0
+            S.follow_cam_debug_timer = S.follow_cam_debug_timer + dt
+            if S.follow_cam_debug_timer >= 5 then
+                S.follow_cam_debug_timer = 0
                 print("=== FOLLOW CAMERA DEBUG ===")
-                print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", ship.x, ship.y, ship.z))
-                print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", cam.pos.x, cam.pos.y, cam.pos.z))
+                print(string.format("Ship pos: x=%.1f, y=%.1f, z=%.1f", S.ship.x, S.ship.y, S.ship.z))
+                print(string.format("Cam pos:  x=%.1f, y=%.1f, z=%.1f", S.cam.pos.x, S.cam.pos.y, S.cam.pos.z))
                 print(string.format("Cam fwd:  x=%.3f, y=%.3f, z=%.3f", cam_fwd_x, cam_fwd_y, cam_fwd_z))
                 print(string.format("Ship vel: vx=%.3f, vy=%.3f, vz=%.3f (horiz=%.3f)",
-                    ship.vx, ship.vy, ship.vz, horizontal_speed))
-                print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(cam.yaw), math.deg(cam.pitch)))
+                    S.ship.vx, S.ship.vy, S.ship.vz, horizontal_speed))
+                print(string.format("Yaw: %.1f deg, Pitch: %.1f deg", math.deg(S.cam.yaw), math.deg(S.cam.pitch)))
             end
         end
 
         -- Update mouse position tracking
-        last_mouse_x, last_mouse_y = love.mouse.getPosition()
+        S.last_mouse_x, S.last_mouse_y = love.mouse.getPosition()
 
-    elseif camera_mode == "focus" then
+    elseif S.camera_mode == "focus" then
         -- FOCUS MODE: Camera looks at current target/goal
         local target = HUD.get_target()
         if not target and Mission.is_active() then
@@ -1190,35 +1341,35 @@ function flight_scene.update(dt)
 
         if target then
             -- Calculate direction to target (same convention as guide arrow)
-            local dx = target.x - cam.pos.x
-            local dz = target.z - cam.pos.z
-            local dy = (target.y or ship.y) - cam.pos.y
+            local dx = target.x - S.cam.pos.x
+            local dz = target.z - S.cam.pos.z
+            local dy = (target.y or S.ship.y) - S.cam.pos.y
             local dist_xz = math.sqrt(dx * dx + dz * dz)
 
             -- Target yaw (horizontal direction) - negate dz for camera convention
             local target_yaw = math.atan2(dx, -dz)
-            local yaw_diff = target_yaw - cam.yaw
+            local yaw_diff = target_yaw - S.cam.yaw
             while yaw_diff > math.pi do yaw_diff = yaw_diff - math.pi * 2 end
             while yaw_diff < -math.pi do yaw_diff = yaw_diff + math.pi * 2 end
-            cam.yaw = cam.yaw + yaw_diff * 0.1 * timeScale
+            S.cam.yaw = S.cam.yaw + yaw_diff * 0.1 * timeScale
 
             -- Target pitch (vertical angle) - clamp to ±90 degrees
             local target_pitch = math.atan2(dy, dist_xz)
             local max_pitch = math.pi / 2 - 0.01  -- Just under 90 degrees to avoid gimbal lock
             target_pitch = math.max(-max_pitch, math.min(max_pitch, target_pitch))
-            cam.pitch = cam.pitch + (target_pitch - cam.pitch) * 0.1 * timeScale
+            S.cam.pitch = S.cam.pitch + (target_pitch - S.cam.pitch) * 0.1 * timeScale
         else
             -- No target - fall back to follow mode behavior
-            local speed_sq = ship.vx * ship.vx + ship.vz * ship.vz
+            local speed_sq = S.ship.vx * S.ship.vx + S.ship.vz * S.ship.vz
 
             if speed_sq > 0.001 then
                 local speed = math.sqrt(speed_sq)
-                local move_dir_x = ship.vx / speed
-                local move_dir_z = ship.vz / speed
+                local move_dir_x = S.ship.vx / speed
+                local move_dir_z = S.ship.vz / speed
 
                 -- Camera looks opposite to velocity (same as follow mode)
                 local target_yaw = math.atan2(move_dir_x, -move_dir_z)
-                local angle_diff = target_yaw - cam.yaw
+                local angle_diff = target_yaw - S.cam.yaw
                 while angle_diff > math.pi do angle_diff = angle_diff - math.pi * 2 end
                 while angle_diff < -math.pi do angle_diff = angle_diff + math.pi * 2 end
 
@@ -1232,47 +1383,47 @@ function flight_scene.update(dt)
                     if math.abs(rotation) > math.abs(angle_diff) then
                         rotation = angle_diff
                     end
-                    cam.yaw = cam.yaw + rotation
+                    S.cam.yaw = S.cam.yaw + rotation
                 end
             end
 
             -- Gradually return pitch to neutral
-            cam.pitch = cam.pitch + (0 - cam.pitch) * 0.02 * timeScale
+            S.cam.pitch = S.cam.pitch + (0 - S.cam.pitch) * 0.02 * timeScale
         end
 
         -- Update mouse position tracking
-        last_mouse_x, last_mouse_y = love.mouse.getPosition()
+        S.last_mouse_x, S.last_mouse_y = love.mouse.getPosition()
     end
 
-    -- Camera follows ship with smooth lerp (frame-rate independent)
-    -- Pivot point is the ship position
-    local pivot_x = ship.x
-    local pivot_y = ship.y
-    local pivot_z = ship.z
+    -- Camera follows S.ship with smooth lerp (frame-rate independent)
+    -- Pivot point is the S.ship position
+    local pivot_x = S.ship.x
+    local pivot_y = S.ship.y
+    local pivot_z = S.ship.z
 
-    -- Update camera distance based on ship speed (with smooth lerp)
-    local ship_speed = math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy + ship.vz * ship.vz)
+    -- Update camera distance based on S.ship speed (with smooth lerp)
+    local ship_speed = math.sqrt(S.ship.vx * S.ship.vx + S.ship.vy * S.ship.vy + S.ship.vz * S.ship.vz)
     local speed_factor = math.min(ship_speed / config.CAMERA_DISTANCE_SPEED_MAX, 1.0)
     local target_cam_dist = config.CAMERA_DISTANCE_MIN + (config.CAMERA_DISTANCE_MAX - config.CAMERA_DISTANCE_MIN) * speed_factor
     local zoomLerpFactor = 1.0 - math.pow(1.0 - camera_zoom_speed, timeScale)
-    cam_dist = cam_dist + (target_cam_dist - cam_dist) * zoomLerpFactor
+    S.cam_dist = S.cam_dist + (target_cam_dist - S.cam_dist) * zoomLerpFactor
 
-    -- Camera position: always at the pivot (ship position)
-    -- The cam_dist offset is applied in the view matrix, not in world space
+    -- Camera position: always at the pivot (S.ship position)
+    -- The S.cam_dist offset is applied in the view matrix, not in world space
     local target_x, target_y, target_z = pivot_x, pivot_y, pivot_z
 
     -- Frame-rate independent lerp: 1 - (1-speed)^(dt*60)
     local lerpFactor = 1.0 - math.pow(1.0 - camera_lerp_speed, timeScale)
 
     -- Smoothly move camera toward target
-    cam.pos.x = cam.pos.x + (target_x - cam.pos.x) * lerpFactor
-    cam.pos.y = cam.pos.y + (target_y - cam.pos.y) * lerpFactor
-    cam.pos.z = cam.pos.z + (target_z - cam.pos.z) * lerpFactor
+    S.cam.pos.x = S.cam.pos.x + (target_x - S.cam.pos.x) * lerpFactor
+    S.cam.pos.y = S.cam.pos.y + (target_y - S.cam.pos.y) * lerpFactor
+    S.cam.pos.z = S.cam.pos.z + (target_z - S.cam.pos.z) * lerpFactor
 
     -- Track previous camera mode for smooth transitions
-    prev_camera_mode = camera_mode
+    S.prev_camera_mode = S.camera_mode
 
-    camera_module.updateVectors(cam)
+    camera_module.updateVectors(S.cam)
     profile("update")
 end
 
@@ -1322,9 +1473,9 @@ function flight_scene.draw()
     renderer.clearBuffers()
 
     -- Build view matrix
-    -- cam_dist pushes the view backward in camera's local -Z direction
-    local viewMatrix = camera_module.getViewMatrix(cam, cam_dist)
-    renderer.setMatrices(projMatrix, viewMatrix, {x = cam.pos.x, y = cam.pos.y, z = cam.pos.z})
+    -- S.cam_dist pushes the view backward in camera's local -Z direction
+    local viewMatrix = camera_module.getViewMatrix(S.cam, S.cam_dist)
+    renderer.setMatrices(S.projMatrix, viewMatrix, {x = S.cam.pos.x, y = S.cam.pos.y, z = S.cam.pos.z})
 
     -- Store view matrix for target bracket drawing later
     flight_scene.viewMatrix = viewMatrix
@@ -1335,10 +1486,10 @@ function flight_scene.draw()
         profile(" shadows")
 
         -- Begin shadow map pass
-        if ShadowMap.beginPass(cam.pos.x, cam.pos.y, cam.pos.z) then
-            -- Add ship as shadow caster
-            if ship and ship.mesh then
-                ShadowMap.addMeshCaster(ship.mesh, ship:get_model_matrix())
+        if ShadowMap.beginPass(S.cam.pos.x, S.cam.pos.y, S.cam.pos.z) then
+            -- Add S.ship as shadow caster
+            if S.ship and S.ship.mesh then
+                ShadowMap.addMeshCaster(S.ship.mesh, S.ship:get_model_matrix())
             end
 
             -- Add trees as shadow casters
@@ -1348,8 +1499,8 @@ function flight_scene.draw()
                 ShadowMap.addTreeCaster(tree.x, tree.y, tree.z, 0.55, 2.0)
             end
 
-            -- Add buildings as shadow casters
-            for _, building in ipairs(buildings) do
+            -- Add S.buildings as shadow casters
+            for _, building in ipairs(S.buildings) do
                 local groundY = Heightmap.get_height(building.x, building.z)
                 ShadowMap.addBoxCaster(building.x, groundY, building.z,
                     building.width, building.height, building.depth)
@@ -1392,7 +1543,7 @@ function flight_scene.draw()
     elseif Weather.is_enabled() then
         sky_type = "overcast"
     end
-    Skydome.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, sky_type)
+    Skydome.draw(renderer, S.cam.pos.x, S.cam.pos.y, S.cam.pos.z, sky_type)
     profile(" skydome")
 
     -- Set up checkpoint point lights for race mode
@@ -1417,7 +1568,7 @@ function flight_scene.draw()
         for i, cp in ipairs(checkpoints) do
             -- Only add lights for current and next checkpoint
             if i == current_cp or i == current_cp + 1 then
-                local dist = math.sqrt((cp.x - cam.pos.x)^2 + (cp.z - cam.pos.z)^2)
+                local dist = math.sqrt((cp.x - S.cam.pos.x)^2 + (cp.z - S.cam.pos.z)^2)
                 if dist < cp_max_distance then
                     local ground_y = cp.ground_y or (Heightmap and Heightmap.get_height(cp.x, cp.z)) or 0
                     local light_y = ground_y + (cp.y or 6)
@@ -1444,7 +1595,7 @@ function flight_scene.draw()
     end
 
     -- Add thruster lights in night mode when thrusters are firing
-    if Mission.night_mode and ship then
+    if Mission.night_mode and S.ship then
         -- Thruster light config values
         local thr_radius = config.THRUSTER_LIGHT_RADIUS or 8
         local thr_intensity = config.THRUSTER_LIGHT_INTENSITY or 0.6
@@ -1453,16 +1604,16 @@ function flight_scene.draw()
         local thr_flicker_speed = config.THRUSTER_LIGHT_FLICKER_SPEED or 12
         local thr_color = config.THRUSTER_LIGHT_COLOR or {1.0, 0.6, 0.2}
 
-        for i, thruster in ipairs(ship.thrusters) do
+        for i, thruster in ipairs(S.ship.thrusters) do
             if thruster.active then
                 -- Get engine position in model space
-                local engine = ship.engine_positions[i]
+                local engine = S.ship.engine_positions[i]
                 if engine then
                     -- Transform engine position to world space
-                    local engine_world = mat4.multiplyVec4(ship:get_model_matrix(), {
-                        engine.x * ship.model_scale,
-                        engine.y * ship.model_scale,
-                        engine.z * ship.model_scale,
+                    local engine_world = mat4.multiplyVec4(S.ship:get_model_matrix(), {
+                        engine.x * S.ship.model_scale,
+                        engine.y * S.ship.model_scale,
+                        engine.z * S.ship.model_scale,
                         1
                     })
 
@@ -1479,94 +1630,94 @@ function flight_scene.draw()
 
     -- Draw terrain (pass camera yaw for frustum culling)
     profile(" terrain")
-    Heightmap.draw(renderer, cam.pos.x, cam.pos.z, nil, 80, cam.yaw)
+    Heightmap.draw(renderer, S.cam.pos.x, S.cam.pos.z, nil, 80, S.cam.yaw)
     profile(" terrain")
 
     -- Draw trees (with distance and frustum culling)
     profile(" trees")
-    Trees.draw(renderer, cam.pos.x, cam.pos.y, cam.pos.z, cam.yaw)
+    Trees.draw(renderer, S.cam.pos.x, S.cam.pos.y, S.cam.pos.z, S.cam.yaw)
     profile(" trees")
 
-    -- Draw buildings
-    profile(" buildings")
-    for _, building in ipairs(buildings) do
-        Building.draw(building, renderer, cam.pos.x, cam.pos.z)
+    -- Draw S.buildings
+    profile(" S.buildings")
+    for _, building in ipairs(S.buildings) do
+        Building.draw(building, renderer, S.cam.pos.x, S.cam.pos.z)
     end
-    profile(" buildings")
+    profile(" S.buildings")
 
     -- Draw landing pads
     profile(" pads")
-    LandingPads.draw_all(renderer, cam.pos.x, cam.pos.z)
+    LandingPads.draw_all(renderer, S.cam.pos.x, S.cam.pos.z)
     profile(" pads")
 
     -- Draw cargo (mission cargo or free-flight cargo)
     profile(" cargo")
     if Mission.is_active() then
-        Mission.draw_cargo(renderer, cam.pos.x, cam.pos.z)
+        Mission.draw_cargo(renderer, S.cam.pos.x, S.cam.pos.z)
     else
-        for _, cargo in ipairs(cargo_items) do
-            Cargo.draw(cargo, renderer, cam.pos.x, cam.pos.z)
+        for _, cargo in ipairs(S.cargo_items) do
+            Cargo.draw(cargo, renderer, S.cam.pos.x, S.cam.pos.z)
         end
     end
     profile(" cargo")
 
-    -- Draw ship
-    profile(" ship")
-    ship:draw(renderer)
-    profile(" ship")
+    -- Draw S.ship
+    profile(" S.ship")
+    S.ship:draw(renderer)
+    profile(" S.ship")
 
     -- Draw combat elements (Mission 6)
-    if combat_active then
-        -- Draw turret on ship
-        Turret.draw(renderer, ship)
+    if S.combat_active then
+        -- Draw turret on S.ship
+        Turret.draw(renderer, S.ship)
 
         -- Draw aliens
         Aliens.draw(renderer)
         Aliens.draw_debug(renderer)
 
         -- Draw bullets (pass viewMatrix for billboard math)
-        Bullets.draw(renderer, viewMatrix, cam)
+        Bullets.draw(renderer, viewMatrix, S.cam)
     end
 
     -- Draw smoke particles (disabled - billboard rendering needs fixing)
-    -- smoke_system:draw(renderer, cam)
+    -- S.smoke_system:draw(renderer, S.cam)
 
     -- Draw billboards (camera-facing smoke/particle quads) - must be before flush3D
-    Billboard.draw(renderer, viewMatrix, cam)
+    Billboard.draw(renderer, viewMatrix, S.cam)
 
     -- Draw rain as depth-tested 3D geometry (MUST be before flush3D for proper occlusion)
-    Weather.draw_rain(renderer, cam, ship.vx, ship.vy, ship.vz)
+    Weather.draw_rain(renderer, S.cam, S.ship.vx, S.ship.vy, S.ship.vz)
 
-    -- Flush 3D geometry (includes rain, terrain, ship - all depth tested together)
+    -- Flush 3D geometry (includes rain, terrain, S.ship - all depth tested together)
     renderer.flush3D()
 
     -- Draw 3D guide arrow for missions (anchored to camera pivot, depth tested against geometry)
     -- Skip guide arrow in focus mode (camera already points at target)
-    if Mission.is_active() and camera_mode ~= "focus" then
+    if Mission.is_active() and S.camera_mode ~= "focus" then
         -- For combat mode (Mission 7): only draw arrow if there's a selected target
         -- For other missions: draw normal guide arrow
-        if combat_active then
+        if S.combat_active then
             local combat_target = HUD.get_target()
             if combat_target then
-                Mission.draw_target_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, combat_target)
+                Mission.draw_target_arrow(renderer, S.cam.pos.x, S.cam.pos.y, S.cam.pos.z, combat_target)
             end
             -- No arrow if no target selected in combat mode
         else
-            Mission.draw_guide_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z)
+            Mission.draw_guide_arrow(renderer, S.cam.pos.x, S.cam.pos.y, S.cam.pos.z)
         end
     end
     -- Draw 3D checkpoint markers for race mode (always show, even in focus mode)
     if Mission.is_active() then
-        Mission.draw_checkpoints(renderer, Heightmap, cam.pos.x, cam.pos.z)
+        Mission.draw_checkpoints(renderer, Heightmap, S.cam.pos.x, S.cam.pos.z)
     end
 
     -- Draw wind direction arrow (blue, length based on wind strength)
-    Weather.draw_wind_arrow(renderer, cam.pos.x, cam.pos.y, cam.pos.z, ship.y)
+    Weather.draw_wind_arrow(renderer, S.cam.pos.x, S.cam.pos.y, S.cam.pos.z, S.ship.y)
 
     -- Draw speed lines (depth-tested 3D lines) - disabled during weather (rain acts as speed lines)
     if not Weather.is_enabled() then
         profile(" speedlines")
-        speed_lines:draw(renderer, cam)
+        S.speed_lines:draw(renderer, S.cam)
         profile(" speedlines")
     end
 
@@ -1575,14 +1726,14 @@ function flight_scene.draw()
 
     -- Draw minimap (pass mission cargo if active, otherwise free-flight cargo)
     profile(" minimap")
-    local minimap_cargo = Mission.is_active() and Mission.cargo_objects or cargo_items
+    local minimap_cargo = Mission.is_active() and Mission.cargo_objects or S.cargo_items
     local minimap_target = Mission.is_active() and Mission.get_target() or nil
     -- Pass race checkpoints if in race mode
     local race_checkpoints = Mission.race_checkpoints
     local current_checkpoint = Mission.race and Mission.race.current_checkpoint or 1
     -- Pass enemies if in combat mode
-    local minimap_enemies = combat_active and Aliens.get_all() or nil
-    Minimap.draw(renderer, Heightmap, ship, LandingPads, minimap_cargo, minimap_target, race_checkpoints, current_checkpoint, minimap_enemies)
+    local minimap_enemies = S.combat_active and Aliens.get_all() or nil
+    Minimap.draw(renderer, Heightmap, S.ship, LandingPads, minimap_cargo, minimap_target, race_checkpoints, current_checkpoint, minimap_enemies)
     profile(" minimap")
 
     -- Draw HUD to software buffer (before blit)
@@ -1591,7 +1742,7 @@ function flight_scene.draw()
     if Mission.is_active() then
         mission_data = Mission.get_hud_data()
         -- Update Mission 6 objectives with wave info
-        if combat_active and not Mission.is_complete() then
+        if S.combat_active and not Mission.is_complete() then
             local wave = Aliens.get_wave()
             local total = Aliens.get_total_waves()
             local enemies = #Aliens.fighters + (Aliens.mother_ship and 1 or 0)
@@ -1604,42 +1755,46 @@ function flight_scene.draw()
             end
         end
     else
+        -- Build input-aware control hints
+        local pause_prompt = controls.get_prompt_bracketed("pause")
+        local restart_prompt = controls.get_prompt_bracketed("restart")
         mission_data = {
             name = "FREE FLIGHT",
             objectives = {
                 "Explore the terrain",
                 "Practice landing on pads",
                 "Collect cargo and deliver",
-                "[Tab] Pause  [R] Reset"
+                pause_prompt .. " Pause  " .. restart_prompt .. " Reset"
             }
         }
     end
-    HUD.draw(ship, cam, {
-        game_mode = game_mode,
+    HUD.draw(S.ship, S.cam, {
+        game_mode = S.game_mode,
         mission = mission_data,
         mission_target = Mission.get_target(),
         current_location = nil,  -- TODO: detect current landing pad/building
-        is_repairing = is_repairing,
+        is_repairing = S.is_repairing,
         race_data = Mission.get_race_data(),  -- Race HUD data (nil if not in race)
-        camera_mode = camera_mode,  -- Current camera mode (follow/free/focus)
-        victory_mode = race_victory_mode or mission_complete_mode,  -- Hide WASD during victory
-        altitude_warning = altitude_warning_active,  -- Altitude limit warning active
-        altitude_timer = altitude_warning_timer      -- Seconds remaining before explosion
+        countdown_data = Mission.get_countdown_data(),  -- Countdown data for non-race missions
+        camera_mode = S.camera_mode,  -- Current camera mode (follow/free/focus)
+        victory_mode = S.race_victory_mode or S.mission_complete_mode,  -- Hide WASD during victory
+        altitude_warning = S.altitude_warning_active,  -- Altitude limit warning active
+        altitude_timer = S.altitude_warning_timer      -- Seconds remaining before explosion
     })
 
     -- Draw combat HUD (targeting, mothership health bar)
-    if combat_active then
+    if S.combat_active then
         HUD.draw_combat_hud(Aliens.get_all(), Aliens.mother_ship)
 
         -- Draw target bracket around selected target
         local target = HUD.get_target()
         if target then
-            HUD.draw_target_bracket_3d(target, cam, projMatrix, flight_scene.viewMatrix)
+            HUD.draw_target_bracket_3d(target, S.cam, S.projMatrix, flight_scene.viewMatrix)
         end
     end
 
-    -- Draw death screen overlay if ship is destroyed
-    if ship_death_mode and ship_death_timer > 1.5 then
+    -- Draw death screen overlay if S.ship is destroyed
+    if S.ship_death_mode and S.ship_death_timer > 1.5 then
         -- Dark overlay
         renderer.drawRectFill(0, 0, config.RENDER_WIDTH, config.RENDER_HEIGHT, 0, 0, 0, 180)
 
@@ -1649,15 +1804,16 @@ function flight_scene.draw()
         local title_y = config.RENDER_HEIGHT / 2 - 30
         renderer.drawText(title_x, title_y, title, 255, 80, 80)
 
-        -- Instructions
-        local restart_text = "[R] Restart"
-        local quit_text = "[Q] Quit to Menu"
+        -- Instructions (input-aware prompts)
+        local death_prompts = controls.get_prompts("death_screen")
+        local restart_text = death_prompts[1]
+        local quit_text = death_prompts[2]
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, config.RENDER_HEIGHT / 2 + 10, restart_text, 255, 255, 255)
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, config.RENDER_HEIGHT / 2 + 25, quit_text, 200, 200, 200)
     end
 
     -- Draw mission complete celebration panel (non-race missions)
-    if mission_complete_mode then
+    if S.mission_complete_mode then
         -- Panel dimensions
         local panel_width = 160
         local panel_height = 80
@@ -1679,9 +1835,10 @@ function flight_scene.draw()
         local name_x = (config.RENDER_WIDTH - renderer.getTextWidth(mission_name)) / 2
         renderer.drawText(name_x, title_y + 18, mission_name, 255, 255, 255)
 
-        -- Instructions
-        local quit_text = "[Q] Return to Menu"
-        local restart_text = "[R] Replay Mission"
+        -- Instructions (input-aware prompts)
+        local complete_prompts = controls.get_prompts("mission_complete")
+        local quit_text = complete_prompts[1]
+        local restart_text = complete_prompts[2]
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, panel_y + panel_height - 28, quit_text, 200, 255, 200)
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, panel_y + panel_height - 14, restart_text, 180, 180, 180)
     end
@@ -1728,9 +1885,10 @@ function flight_scene.draw()
         local time_x = (config.RENDER_WIDTH - renderer.getTextWidth(time_text)) / 2
         renderer.drawText(time_x, title_y + 32, time_text, 200, 200, 200)
 
-        -- Instructions
-        local quit_text = "[Q] Return to Menu"
-        local restart_text = "[R] Try Again"
+        -- Instructions (input-aware prompts)
+        local failed_prompts = controls.get_prompts("race_failed")
+        local quit_text = failed_prompts[1]
+        local restart_text = failed_prompts[2]
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(quit_text)) / 2, panel_y + panel_height - 28, quit_text, 200, 255, 200)
         renderer.drawText((config.RENDER_WIDTH - renderer.getTextWidth(restart_text)) / 2, panel_y + panel_height - 14, restart_text, 180, 180, 180)
     end
@@ -1770,16 +1928,16 @@ function flight_scene.keypressed(key)
     -- Handle mission complete - Q to return to menu
     if Mission.is_complete() and key == "q" then
         Mission.reset()
-        race_victory_mode = false  -- Reset victory mode
-        race_victory_timer = 0
-        mission_complete_mode = false  -- Reset mission complete mode
-        mission_complete_timer = 0
-        ship.invulnerable = false  -- Reset invulnerability
+        S.race_victory_mode = false  -- Reset victory mode
+        S.race_victory_timer = 0
+        S.mission_complete_mode = false  -- Reset mission complete mode
+        S.mission_complete_timer = 0
+        S.ship.invulnerable = false  -- Reset invulnerability
         Fireworks.reset()  -- Clear fireworks
-        if combat_active then
+        if S.combat_active then
             Aliens.reset()
             Bullets.reset()
-            combat_active = false
+            S.combat_active = false
         end
         local scene_manager = require("scene_manager")
         scene_manager.switch("menu")
@@ -1792,16 +1950,16 @@ function flight_scene.keypressed(key)
             -- Return to menu from pause
             HUD.close_pause()
             Mission.reset()
-            race_victory_mode = false  -- Reset victory mode
-            race_victory_timer = 0
-            mission_complete_mode = false  -- Reset mission complete mode
-            mission_complete_timer = 0
-            ship.invulnerable = false  -- Reset invulnerability
+            S.race_victory_mode = false  -- Reset victory mode
+            S.race_victory_timer = 0
+            S.mission_complete_mode = false  -- Reset mission complete mode
+            S.mission_complete_timer = 0
+            S.ship.invulnerable = false  -- Reset invulnerability
             Fireworks.reset()  -- Clear fireworks
-            if combat_active then
+            if S.combat_active then
                 Aliens.reset()
                 Bullets.reset()
-                combat_active = false
+                S.combat_active = false
             end
             local scene_manager = require("scene_manager")
             scene_manager.switch("menu")
@@ -1825,104 +1983,83 @@ function flight_scene.keypressed(key)
     end
 
     -- Handle T key for target cycling in combat mode
-    if key == "t" and combat_active then
+    if key == "t" and S.combat_active then
         local enemies = Aliens.get_all()
-        local new_target = HUD.cycle_target(enemies, ship.x, ship.z)
+        local new_target = HUD.cycle_target(enemies, S.ship.x, S.ship.z)
         if new_target then
             Turret.target = new_target
         end
         return
     end
 
-    -- Handle F key to cycle camera modes (follow -> free -> focus)
-    -- If follow mode is disabled, cycle only between free and focus
-    if key == "f" then
-        if camera_mode == "follow" then
-            camera_mode = "free"
-            print("[CAMERA] Switched to FREE mode")
-        elseif camera_mode == "free" then
-            camera_mode = "focus"
-            print("[CAMERA] Switched to FOCUS mode")
-        else
-            -- From focus, go to follow only if enabled, otherwise go to free
-            if config.CAMERA_FOLLOW_MODE_ENABLED then
-                camera_mode = "follow"
-                follow_cam_debug_timer = 4.5  -- Print debug soon after switching
-                print("[CAMERA] Switched to FOLLOW mode")
-            else
-                camera_mode = "free"
-                print("[CAMERA] Switched to FREE mode")
-            end
-        end
-        return
-    end
+    -- Note: F key / D-Pad Right camera cycling is handled in update() via controls.just_pressed("camera_cycle")
 
     -- Handle Q key in death mode - quit to menu
-    if key == "q" and ship_death_mode then
-        ship_death_mode = false
+    if key == "q" and S.ship_death_mode then
+        S.ship_death_mode = false
         Mission.reset()
         Billboard.reset()
         Fireworks.reset()
-        if combat_active then
+        if S.combat_active then
             Aliens.reset()
             Bullets.reset()
-            combat_active = false
+            S.combat_active = false
         end
         local scene_manager = require("scene_manager")
         scene_manager.switch("menu")
         return
     end
 
-    if key == "r" and ship_death_mode then
-        -- Reset ship to first landing pad (only works when dead)
+    if key == "r" and S.ship_death_mode then
+        -- Reset S.ship to first landing pad (only works when dead)
         local spawn_x, spawn_y, spawn_z, spawn_yaw = LandingPads.get_spawn(1)
-        ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
+        S.ship:reset(spawn_x, spawn_y, spawn_z, spawn_yaw)
 
         -- Reset camera rotation
-        cam.pitch = 0
-        cam.yaw = 0
+        S.cam.pitch = 0
+        S.cam.yaw = 0
 
         -- Reset death state
-        ship_death_mode = false
-        ship_death_timer = 0
-        ship_death_landed = false
-        repair_timer = 0
-        is_repairing = false
+        S.ship_death_mode = false
+        S.ship_death_timer = 0
+        S.ship_death_landed = false
+        S.repair_timer = 0
+        S.is_repairing = false
         Billboard.reset()
 
         -- Reset victory mode and fireworks
-        race_victory_mode = false
-        race_victory_timer = 0
-        mission_complete_mode = false
-        mission_complete_timer = 0
-        ship.invulnerable = false  -- Reset invulnerability
+        S.race_victory_mode = false
+        S.race_victory_timer = 0
+        S.mission_complete_mode = false
+        S.mission_complete_timer = 0
+        S.ship.invulnerable = false  -- Reset invulnerability
         Fireworks.reset()
 
         -- Reset mission or race if active
         if Mission.is_active() then
             Mission.reset()
-            if current_mission_num then
-                Missions.start(current_mission_num, Mission)
-                HUD.set_mission(current_mission_num)
+            if S.current_mission_num then
+                Missions.start(S.current_mission_num, Mission)
+                HUD.set_mission(S.current_mission_num)
                 -- Restart mission music
-                AudioManager.start_level_music(current_mission_num)
+                AudioManager.start_level_music(S.current_mission_num)
 
                 -- Reset combat for Mission 7
-                if current_mission_num == 7 then
+                if S.current_mission_num == 7 then
                     Aliens.reset()
                     Bullets.reset()
                     Turret.reset()
-                    wave_start_delay = 2.0
+                    S.wave_start_delay = 2.0
                 end
-            elseif current_track_num then
-                Missions.start_race_track(current_track_num, Mission)
+            elseif S.current_track_num then
+                Missions.start_race_track(S.current_track_num, Mission)
                 -- Restart racing music
                 AudioManager.start_level_music(7)
             end
         end
 
         -- Reset free-flight cargo
-        for _, cargo in ipairs(cargo_items) do
+        for _, cargo in ipairs(S.cargo_items) do
             cargo.state = "idle"
             cargo.x = 15
             cargo.z = 10
@@ -1932,10 +2069,10 @@ function flight_scene.keypressed(key)
         end
     end
 
-    -- B key - spawn test billboard above ship (free flight only)
+    -- B key - spawn test billboard above S.ship (free flight only)
     -- if key == "b" and not Mission.is_active() then
-    --     Billboard.spawn(ship.x, ship.y + 0.2, ship.z, 0.5, 3.0)
-    --     print("Spawned billboard at ship position")
+    --     Billboard.spawn(S.ship.x, S.ship.y + 0.2, S.ship.z, 0.5, 3.0)
+    --     print("Spawned billboard at S.ship position")
     -- end
 end
 

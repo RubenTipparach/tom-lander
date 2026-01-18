@@ -1,5 +1,42 @@
 -- Controls Configuration
 -- Defines all control mappings for keyboard and gamepad, plus prompt text
+--
+-- ┌─────────────────────────────────────────────────────────────────────────┐
+-- │                        CONTROL MAPPING TABLE                            │
+-- ├─────────────────────┬──────────────────┬────────────────────────────────┤
+-- │ Action              │ Keyboard         │ Gamepad (Xbox)                 │
+-- ├─────────────────────┼──────────────────┼────────────────────────────────┤
+-- │ FLIGHT CONTROLS     │                  │                                │
+-- │ Thruster Front      │ W / I            │ Y button / Left Stick Up       │
+-- │ Thruster Back       │ S / K            │ A button / Left Stick Down     │
+-- │ Thruster Left       │ A / J            │ X button / Left Stick Left     │
+-- │ Thruster Right      │ D / L            │ B button / Left Stick Right    │
+-- │ All Thrusters       │ Space            │ RT (Right Trigger)             │
+-- │ Left+Right          │ N                │ -                              │
+-- │ Front+Back          │ M                │ -                              │
+-- ├─────────────────────┼──────────────────┼────────────────────────────────┤
+-- │ ROTATION            │                  │                                │
+-- │ Yaw Left            │ Q                │ LB (Left Bumper)               │
+-- │ Yaw Right           │ E                │ RB (Right Bumper)              │
+-- │ Auto-Level          │ Shift            │ LT (Left Trigger)              │
+-- ├─────────────────────┼──────────────────┼────────────────────────────────┤
+-- │ CAMERA              │                  │                                │
+-- │ Camera Up/Down/L/R  │ Arrow Keys       │ Right Stick                    │
+-- │ Cycle Camera        │ F                │ D-Pad Right                    │
+-- │ Cycle Target        │ T                │ D-Pad Left                     │
+-- ├─────────────────────┼──────────────────┼────────────────────────────────┤
+-- │ MENU/UI             │                  │                                │
+-- │ Pause               │ Tab / Esc        │ Start                          │
+-- │ Confirm             │ Enter / Space    │ A button                       │
+-- │ Back                │ Esc / Backspace  │ B button                       │
+-- │ Menu Navigate       │ Arrows / WASD    │ D-Pad / Left Stick             │
+-- ├─────────────────────┼──────────────────┼────────────────────────────────┤
+-- │ GAME ACTIONS        │                  │                                │
+-- │ Restart             │ R                │ Y button                       │
+-- │ Quit to Menu        │ Q                │ B button                       │
+-- │ Toggle Controls     │ C                │ Select/Back                    │
+-- │ Toggle Goals        │ G                │ D-Pad Up                       │
+-- └─────────────────────┴──────────────────┴────────────────────────────────┘
 
 local controls_config = {}
 
@@ -71,18 +108,18 @@ controls_config.actions = {
     -- Rotation controls
     yaw_left = {
         keyboard = {"q"},
-        gamepad_button = nil,
-        gamepad_axis = nil,  -- Yaw not mapped on gamepad
+        gamepad_button = {"leftshoulder"},  -- LB (Xbox)
+        gamepad_axis = nil,
         prompt_keyboard = "Q",
-        prompt_gamepad = "",
+        prompt_gamepad = "LB",
         description = "Yaw left",
     },
     yaw_right = {
         keyboard = {"e"},
-        gamepad_button = nil,
-        gamepad_axis = nil,  -- Yaw not mapped on gamepad
+        gamepad_button = {"rightshoulder"},  -- RB (Xbox)
+        gamepad_axis = nil,
         prompt_keyboard = "E",
-        prompt_gamepad = "",
+        prompt_gamepad = "RB",
         description = "Yaw right",
     },
     auto_level = {
@@ -129,9 +166,9 @@ controls_config.actions = {
     },
     camera_cycle = {
         keyboard = {"f"},
-        gamepad_button = {"leftshoulder"},  -- LB (Xbox)
+        gamepad_button = {"dpright"},  -- D-Pad Right
         prompt_keyboard = "F",
-        prompt_gamepad = "LB",
+        prompt_gamepad = "D-Right",
         description = "Cycle camera mode",
     },
 
@@ -214,16 +251,16 @@ controls_config.actions = {
     },
     toggle_goals = {
         keyboard = {"g"},
-        gamepad_button = nil,
+        gamepad_button = {"dpup"},  -- D-Pad Up
         prompt_keyboard = "G",
-        prompt_gamepad = "",
+        prompt_gamepad = "D-Up",
         description = "Toggle goals",
     },
     target_cycle = {
         keyboard = {"t"},
-        gamepad_button = {"rightshoulder"},  -- RB (Xbox)
+        gamepad_button = {"dpleft"},  -- D-Pad Left
         prompt_keyboard = "T",
-        prompt_gamepad = "RB",
+        prompt_gamepad = "D-Left",
         description = "Cycle target",
     },
 }
@@ -332,28 +369,28 @@ controls_config.prompts = {
     camera_mode = {
         follow = {
             keyboard = "[F] CAM: FOLLOW",
-            gamepad = "[LB] CAM: FOLLOW",
+            gamepad = "[D-Right] CAM: FOLLOW",
         },
         free = {
             keyboard = "[F] CAM: FREE",
-            gamepad = "[LB] CAM: FREE",
+            gamepad = "[D-Right] CAM: FREE",
         },
         focus = {
             keyboard = "[F] CAM: FOCUS",
-            gamepad = "[LB] CAM: FOCUS",
+            gamepad = "[D-Right] CAM: FOCUS",
         },
     },
 
     -- Combat target indicator
     target_cycle = {
         keyboard = "[T] Target",
-        gamepad = "[RB] Target",
+        gamepad = "[D-Left] Target",
     },
 
     -- Toggle goals
     toggle_goals = {
         keyboard = "[G] Toggle Goals",
-        gamepad = "",
+        gamepad = "[D-Up] Toggle Goals",
     },
 }
 

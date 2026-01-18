@@ -188,7 +188,7 @@ function Fireworks.draw(renderer)
 
     -- Draw sparks as short lines (trails)
     for _, spark in ipairs(sparks) do
-        local life_ratio = 1 - (spark.life / spark.max_life)  -- 1 = fresh, 0 = dying
+        local life_ratio = 1 - (spark.life / spark.max_life)  +0.5-- 1 = fresh, 0 = dying
         local alpha = life_ratio * life_ratio  -- Fade out quadratically
 
         -- Lerp from white (fresh) to spark color (dying), then apply fade

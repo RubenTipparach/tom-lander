@@ -319,9 +319,10 @@ function HUD.draw_mission_panel(mission)
         text_y = text_y + line_height
     end
 
-    -- Draw toggle hint
+    -- Draw toggle hint (input-aware)
     text_y = text_y + 4
-    renderer.drawText(MISSION_BOX_X + 4, text_y, "[G] Toggle Goals",
+    local toggle_goals_prompt = controls.get_prompt_bracketed("toggle_goals") .. " Toggle Goals"
+    renderer.drawText(MISSION_BOX_X + 4, text_y, toggle_goals_prompt,
                       COLOR_GREY[1], COLOR_GREY[2], COLOR_GREY[3], 1, true)
 end
 
@@ -444,6 +445,60 @@ function HUD.draw_repair_indicator(is_repairing)
         renderer.drawText(HULL_BAR_X + HULL_BAR_WIDTH + 5, HULL_BAR_Y + 1, "REPAIRING",
                           COLOR_GREEN[1], COLOR_GREEN[2], COLOR_GREEN[3], 1, true)
     end
+end
+
+-- Draw mission countdown (3-2-1-GO!) for non-race missions
+-- Returns true if countdown is being displayed
+function HUD.draw_countdown(countdown_data)
+    if not countdown_data or not countdown_data.active then
+        return false
+    end
+
+    local screen_w = config.RENDER_WIDTH or 480
+    local screen_h = config.RENDER_HEIGHT or 270
+
+    local countdown_text = ""
+
+    -- Show each number for 1 second:
+    -- 4.0-3.0: "3", 3.0-2.0: "2", 2.0-1.0: "1", 1.0-0.0: "GO!"
+    if countdown_data.timer > 3.0 then
+        countdown_text = "3"
+    elseif countdown_data.timer > 2.0 then
+        countdown_text = "2"
+    elseif countdown_data.timer > 1.0 then
+        countdown_text = "1"
+    elseif countdown_data.timer > 0 then
+        countdown_text = "GO!"
+    end
+
+    if countdown_text ~= "" then
+        -- Big centered countdown number/text
+        local pulse = 0.7 + 0.3 * math.sin(love.timer.getTime() * 10)  -- Fast pulse
+        local scale = 3  -- Big text (3x scale)
+
+        -- Calculate position for centered text
+        local text_width = getTextWidth(countdown_text, scale)
+        local text_x = (screen_w - text_width) / 2
+        local text_y = screen_h / 2 - 20
+
+        -- Color: yellow for numbers, green for GO!
+        local r, g, b
+        if countdown_text == "GO!" then
+            r, g, b = 0, math.floor(255 * pulse), 0
+        else
+            r, g, b = math.floor(255 * pulse), math.floor(255 * pulse), 0
+        end
+
+        renderer.drawText(text_x, text_y, countdown_text, r, g, b, scale, true)
+
+        -- "GET READY!" above the number
+        local ready_text = "GET READY!"
+        local ready_x = centerTextX(ready_text)
+        renderer.drawText(ready_x, text_y - 30, ready_text,
+                          COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
+    end
+
+    return true  -- Countdown is being displayed
 end
 
 -- Draw race HUD (timer bar, lap counter) or race complete stats
@@ -620,8 +675,8 @@ function HUD.draw_race_complete_stats(race_data, screen_w, screen_h)
         lap_y = lap_y + 12
     end
 
-    -- "Press Q to return" at bottom
-    local return_text = "[Q] RETURN TO MENU"
+    -- "Press to return" at bottom (input-aware)
+    local return_text = controls.get_prompt_bracketed("quit_to_menu") .. " RETURN TO MENU"
     local return_x = centerTextX(return_text)
     renderer.drawText(return_x, screen_h - 30, return_text,
                       COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1, true)
@@ -672,7 +727,8 @@ function HUD.draw_thruster_indicator(ship)
         local screen_x, screen_y, visible = renderer.worldToScreen(world_x, world_y, world_z)
 
         if visible and screen_x and screen_y then
-            local is_active = ship.thrusters[i] and ship.thrusters[i].active
+            local thruster = ship.thrusters[i]
+            local is_active = thruster and thruster.active
             local key = thruster_keys[i]
 
             -- Center the letter on the projected position
@@ -683,8 +739,15 @@ function HUD.draw_thruster_indicator(ship)
             renderer.drawText(text_x + 1, text_y + 1, key,
                               COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
 
-            -- Draw key letter (white when inactive, red when active)
-            local text_color = is_active and COLOR_RED or COLOR_WHITE
+            -- Determine color: yellow if both RT/Space AND LS/individual active, red if just active, white if inactive
+            local text_color = COLOR_WHITE
+            if is_active then
+                -- Check if both all-thrusters (RT/Space) and individual input are active
+                -- When both active, flame_power > power (individual adds 0.2 visual boost)
+                local both_active = thruster.flame_power and thruster.power and
+                                    thruster.flame_power > thruster.power and thruster.power > 0
+                text_color = both_active and COLOR_YELLOW or COLOR_RED
+            end
             renderer.drawText(text_x, text_y, key,
                               text_color[1], text_color[2], text_color[3], 1, false)
         end
@@ -726,6 +789,11 @@ function HUD.draw(ship, camera, opts)
     -- Draw race HUD (timer bar, lap counter)
     if opts.race_data then
         HUD.draw_race_hud(opts.race_data)
+    end
+
+    -- Draw countdown for non-race missions (3-2-1-GO!)
+    if opts.countdown_data and not opts.race_data then
+        HUD.draw_countdown(opts.countdown_data)
     end
 
     -- Draw thruster indicator (WASD keys showing which thrusters are firing)
@@ -1056,8 +1124,12 @@ function HUD.draw_combat_hud(enemies, mother_ship)
                           COLOR_BLACK[1], COLOR_BLACK[2], COLOR_BLACK[3], 1, false)
     end
 
-    -- Draw target hint on right side
-    local hint_text = "[T] Target"
+    -- Draw target hint on right side (input-aware)
+    local target_prompts = controls.get_prompts("target_cycle")
+    local hint_text = target_prompts.keyboard or "[T] Target"
+    if controls.is_gamepad() then
+        hint_text = target_prompts.gamepad or hint_text
+    end
     local hint_x = screen_w - getTextWidth(hint_text) - 10
     local hint_y = screen_h - 30
     renderer.drawText(hint_x, hint_y, hint_text,

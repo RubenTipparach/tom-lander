@@ -186,6 +186,9 @@ config.EXPLOSION_ENEMY_SCALE = 1.5            -- Scale of enemy explosions
 -- ===========================================
 config.FLAME_BRIGHTNESS = 1.0        -- Flame brightness (1.0 = emissive, no shading)
 config.FLAME_ALPHA = 0.5             -- Flame transparency (0-1, 0.5 = 50% transparent)
+config.FLAME_SCALE_MIN = 0.3         -- Minimum flame scale (at zero power)
+config.FLAME_SCALE_RANGE = 0.7       -- Flame scale range (min + range * power = final scale)
+config.FLAME_COMBINED_BOOST = 0.4    -- Visual boost when RT+LS / Space+WASD combined (max 1.2x total)
 
 -- ===========================================
 -- CAMERA SETTINGS
